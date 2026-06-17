@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Mara Voice Console</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #020403;
+      --panel: #080c0b;
+      --panel-soft: #0e1513;
+      --panel-elevated: #111a17;
+      --input: #030605;
+      --line: #22322d;
+      --line-strong: #38564c;
+      --text: #f0fbf7;
+      --muted: #93aaa4;
+      --accent: #34d399;
+      --accent-strong: #8ff0c6;
+      --warn: #f6c453;
+      --bad: #ff7a90;
+      --good: #6ee7a8;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.46);
+    }
+    * { box-sizing: border-box; }
+    ::selection {
+      background: rgba(52, 211, 153, 0.32);
+      color: var(--text);
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 {
+      font-size: 18px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 14px;
+      font-weight: 650;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(340px, 0.75fr);
+      gap: 14px;
+      padding: 14px;
+      max-width: 1480px;
+      margin: 0 auto;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-soft);
+    }
+    .section-body { padding: 14px; }
+    .stack { display: grid; gap: 14px; }
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .metric {
+      min-height: 82px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-elevated);
+    }
+    .metric .label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .metric .value {
+      font-size: 18px;
+      font-weight: 650;
+      overflow-wrap: anywhere;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      border: 1px solid var(--line);
+      white-space: nowrap;
+    }
+    .pill.good { color: var(--good); border-color: #235d42; background: #082d1f; }
+    .pill.bad { color: var(--bad); border-color: #6b2632; background: #341016; }
+    .pill.warn { color: var(--warn); border-color: #6b4c18; background: #302309; }
+    .turns {
+      display: grid;
+      gap: 10px;
+    }
+    .turn {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--panel-elevated);
+      min-height: 94px;
+    }
+    .turn h3 {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .turn pre {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-family: inherit;
+    }
+    .events {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    .events th, .events td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+    .events th {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      background: var(--panel-soft);
+    }
+    .events td {
+      overflow-wrap: anywhere;
+    }
+    .events .time { width: 190px; }
+    .events .status { width: 118px; }
+    form {
+      display: grid;
+      gap: 12px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+    input, select, textarea, button {
+      font: inherit;
+    }
+    input, select, textarea {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px 9px;
+      background: var(--input);
+      color: var(--text);
+    }
+    input:focus, select:focus, textarea:focus, button:focus-visible {
+      outline: 2px solid rgba(52, 211, 153, 0.7);
+      outline-offset: 2px;
+      border-color: var(--line-strong);
+    }
+    textarea {
+      min-height: 68px;
+      resize: vertical;
+      text-transform: none;
+    }
+    .check-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-elevated);
+      color: var(--text);
+      text-transform: none;
+    }
+    .check-row input {
+      width: 20px;
+      min-height: 20px;
+      accent-color: var(--accent);
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    button {
+      min-height: 36px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #02120c;
+      border-radius: 6px;
+      padding: 0 14px;
+      cursor: pointer;
+    }
+    button.secondary {
+      color: var(--accent-strong);
+      background: var(--input);
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .help {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      text-transform: none;
+    }
+    .check-row > span {
+      display: grid;
+      gap: 3px;
+    }
+    .wide { grid-column: 1 / -1; }
+    .error-text { color: var(--bad); overflow-wrap: anywhere; }
+    @media (max-width: 1040px) {
+      main { grid-template-columns: 1fr; }
+      .status-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      header { align-items: flex-start; flex-direction: column; }
+      main { padding: 10px; }
+      .status-strip, .form-grid { grid-template-columns: 1fr; }
+      .events .time { width: 120px; }
+      .events .status { width: 96px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Mara Voice Console</h1>
+      <p class="note" id="subtitle">Loading runtime state...</p>
+    </div>
+    <div class="actions">
+      <span class="pill" id="connection">Connecting</span>
+      <button class="secondary" id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="stack">
+      <section>
+        <div class="section-head">
+          <h2>Runtime</h2>
+          <span class="pill" id="updated">No updates</span>
+        </div>
+        <div class="section-body stack">
+          <div class="status-strip">
+            <div class="metric">
+              <div class="label">Hermes State</div>
+              <div class="value" id="currentStatus">UNKNOWN</div>
+            </div>
+            <div class="metric">
+              <div class="label">Current Action</div>
+              <div class="value" id="currentMessage">-</div>
+            </div>
+            <div class="metric">
+              <div class="label">TTS Server</div>
+              <div class="value" id="ttsStatus">Unknown</div>
+            </div>
+            <div class="metric">
+              <div class="label">Streaming</div>
+              <div class="value" id="streamStatus">Unknown</div>
+            </div>
+          </div>
+
+          <div class="turns">
+            <div class="turn">
+              <h3>You</h3>
+              <pre id="lastUser">No transcription yet.</pre>
+            </div>
+            <div class="turn">
+              <h3>Mara</h3>
+              <pre id="lastMara">No reply yet.</pre>
+            </div>
+            <div class="turn" id="errorPanel" hidden>
+              <h3>Last Error</h3>
+              <pre class="error-text" id="lastError"></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>Event Log</h2>
+          <span class="pill" id="eventCount">0 events</span>
+        </div>
+        <div class="section-body" style="padding:0">
+          <table class="events">
+            <thead>
+              <tr>
+                <th class="time">Time</th>
+                <th class="status">Status</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="eventsBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div class="stack">
+      <section>
+        <div class="section-head">
+          <h2>Options</h2>
+          <span class="pill warn">Restart applies changes</span>
+        </div>
+        <div class="section-body">
+          <form id="optionsForm">
+            <label class="check-row wide">
+              <span>
+                <span>True streaming TTS</span>
+                <span class="help">Example: on starts audio sooner using /tts/stream. Off uses the safer WAV/chunked path.</span>
+              </span>
+              <input id="tts_streaming" name="tts_streaming" type="checkbox" title="Turn true raw-PCM streaming on for the next launcher run.">
+            </label>
+            <label class="check-row wide">
+              <span>
+                <span>Regenerate voice reference on next start</span>
+                <span class="help">Example: enable only after changing the reference transcript/path, then turn it back off.</span>
+              </span>
+              <input id="regenerate_voice_reference" name="regenerate_voice_reference" type="checkbox" title="Rebuild the persistent reference WAV on the next TTS server start.">
+            </label>
+            <div class="form-grid">
+              <label>Spoken reply characters
+                <input id="spoken_reply_char_limit" name="spoken_reply_char_limit" type="number" min="0" max="12000" required title="Maximum text sent to speech. 0 speaks the full reply.">
+                <span class="help">Example: 900 is concise; 1300 reads more; 0 reads everything.</span>
+              </label>
+              <label>TTS chunk characters
+                <input id="tts_chunk_char_limit" name="tts_chunk_char_limit" type="number" min="0" max="12000" required title="Chunk size for non-streaming WAV playback.">
+                <span class="help">Example: 450 balances latency and voice continuity for WAV playback.</span>
+              </label>
+              <label>Streaming chunk characters
+                <input id="tts_stream_chunk_char_limit" name="tts_stream_chunk_char_limit" type="number" min="40" max="12000" required title="Chunk size used before calling the true streaming endpoint.">
+                <span class="help">Example: 180-260 starts long replies faster; 0 is not allowed for true streaming.</span>
+              </label>
+              <label>TTS inference steps
+                <input id="tts_inference_timesteps" name="tts_inference_timesteps" type="number" min="1" max="50" required title="Lower is faster, higher can sound cleaner.">
+                <span class="help">Example: 6 is faster; 8 is current default; 10 is slower/older default.</span>
+              </label>
+              <label>TTS timeout seconds
+                <input id="tts_timeout_seconds" name="tts_timeout_seconds" type="number" min="0" max="3600" step="0.5" required title="How long to wait for each local TTS request.">
+                <span class="help">Example: 300 normal; 600 for very slow GPU/CPU runs.</span>
+              </label>
+              <label>SSH timeout seconds
+                <input id="ssh_timeout_seconds" name="ssh_timeout_seconds" type="number" min="0" max="3600" step="0.5" required title="How long to wait for Hermes. 0 disables the response timeout.">
+                <span class="help">Example: 0 lets Hermes work as long as needed.</span>
+              </label>
+              <label>SSH connect timeout
+                <input id="ssh_connect_timeout_seconds" name="ssh_connect_timeout_seconds" type="number" min="1" max="120" step="0.5" required title="How long to wait while opening SSH.">
+                <span class="help">Example: 5 fails fast if the remote machine is offline.</span>
+              </label>
+              <label>Status interval seconds
+                <input id="status_interval_seconds" name="status_interval_seconds" type="number" min="0" max="300" step="0.5" required title="How often the terminal prints still-working updates.">
+                <span class="help">Example: 10 gives steady progress messages; 0 disables them.</span>
+              </label>
+              <label>TTS device
+                <input id="tts_device" name="tts_device" type="text" placeholder="auto" title="Device used by VoxCPM.">
+                <span class="help">Example: auto, cpu, cuda, cuda:0.</span>
+              </label>
+              <label class="wide">Audio output device
+                <select id="audio_device" name="audio_device" title="Where Mara's voice plays."></select>
+                <span class="help">Example: default output device, speakers, or a headset index.</span>
+              </label>
+              <label class="wide">Capture directory
+                <input id="capture_dir" name="capture_dir" type="text" placeholder="Leave blank for Voicebox default" title="Directory watched for Voicebox WAV captures.">
+                <span class="help">Example: leave blank unless Voicebox saves WAVs somewhere else.</span>
+              </label>
+              <label class="wide">Hermes command
+                <input id="hermes_command" name="hermes_command" type="text" placeholder="~/.local/bin/hermes" title="Remote command run over SSH.">
+                <span class="help">Example: ~/.local/bin/hermes. Leave blank for default.</span>
+              </label>
+              <label class="wide">Voice reference WAV path
+                <input id="voice_reference_path" name="voice_reference_path" type="text" placeholder="Leave blank for models\\mara_voice_reference.wav" title="Path to the persistent reference WAV.">
+                <span class="help">Example: leave blank to use the generated default reference WAV.</span>
+              </label>
+              <label class="wide">Voice reference transcript
+                <textarea id="voice_reference_text" name="voice_reference_text" placeholder="Mara is online, calm, warm, and ready to answer clearly." title="Exact transcript of the reference WAV. This is not a voice style prompt."></textarea>
+                <span class="help">Example: exact spoken words in the reference WAV. Do not put style words here.</span>
+              </label>
+            </div>
+            <div class="actions">
+              <span class="note" id="saveStatus"></span>
+              <button class="secondary" id="reloadOptions" type="button">Reload</button>
+              <button id="saveOptions" type="submit">Save Options</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>TTS Health</h2>
+          <span class="pill" id="voiceMode">Unknown</span>
+        </div>
+        <div class="section-body">
+          <div class="turn">
+            <pre id="ttsHealth">No health data yet.</pre>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const ids = [
+      "tts_streaming", "regenerate_voice_reference", "spoken_reply_char_limit",
+      "tts_chunk_char_limit", "tts_stream_chunk_char_limit", "tts_inference_timesteps", "tts_timeout_seconds",
+      "ssh_timeout_seconds", "ssh_connect_timeout_seconds", "status_interval_seconds",
+      "audio_device", "tts_device", "capture_dir", "hermes_command",
+      "voice_reference_path", "voice_reference_text"
+    ];
+    const el = (id) => document.getElementById(id);
+
+    function fmtTime(value) {
+      if (!value) return "No updates";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString();
+    }
+
+    function setPill(node, text, state) {
+      node.textContent = text;
+      node.classList.remove("good", "bad", "warn");
+      if (state) node.classList.add(state);
+    }
+
+    function renderEvents(events) {
+      const body = el("eventsBody");
+      body.replaceChildren();
+      const recent = [...events].reverse().slice(0, 80);
+      for (const event of recent) {
+        const row = document.createElement("tr");
+        const time = document.createElement("td");
+        const status = document.createElement("td");
+        const message = document.createElement("td");
+        time.className = "time";
+        status.className = "status";
+        time.textContent = fmtTime(event.timestamp);
+        status.textContent = event.status || event.type || "";
+        message.textContent = event.message || "";
+        row.append(time, status, message);
+        body.append(row);
+      }
+    }
+
+    function renderState(state) {
+      el("currentStatus").textContent = state.current_status || "UNKNOWN";
+      el("currentMessage").textContent = state.current_message || "-";
+      el("lastUser").textContent = state.last_user_text || "No transcription yet.";
+      el("lastMara").textContent = state.last_mara_reply || "No reply yet.";
+      el("updated").textContent = fmtTime(state.last_updated);
+      el("eventCount").textContent = `${state.event_count || 0} events`;
+      el("subtitle").textContent = state.event_log_path || "";
+      const hasError = Boolean(state.last_error);
+      el("errorPanel").hidden = !hasError;
+      el("lastError").textContent = state.last_error || "";
+      renderEvents(state.recent_events || []);
+
+      const health = state.tts_health || {};
+      const payload = health.payload || {};
+      if (health.ok) {
+        setPill(el("connection"), "Connected", "good");
+        el("ttsStatus").textContent = "OK";
+      } else {
+        setPill(el("connection"), "Check TTS", "warn");
+        el("ttsStatus").textContent = "Degraded";
+      }
+      el("streamStatus").textContent = payload.streaming_supported ? "Available" : "Unavailable";
+      setPill(el("voiceMode"), payload.voice_generation_mode || "Unknown", payload.voice_reference_ready ? "good" : "warn");
+      const healthDisplay = Object.keys(payload).length ? payload : health;
+      el("ttsHealth").textContent = JSON.stringify(healthDisplay, null, 2);
+    }
+
+    async function loadState() {
+      const response = await fetch("/api/state?limit=500&recent_limit=100", { cache: "no-store" });
+      if (!response.ok) throw new Error(`state ${response.status}`);
+      renderState(await response.json());
+    }
+
+    function fieldValue(id) {
+      const node = el(id);
+      if (node.type === "checkbox") return node.checked;
+      if (node.type === "number") return Number(node.value);
+      return node.value;
+    }
+
+    function setField(id, value) {
+      const node = el(id);
+      if (!node) return;
+      if (node.type === "checkbox") {
+        node.checked = Boolean(value);
+      } else {
+        node.value = value ?? "";
+      }
+    }
+
+    function renderAudioDevices(devices, selected) {
+      const select = el("audio_device");
+      select.replaceChildren();
+      const auto = document.createElement("option");
+      auto.value = "";
+      auto.textContent = "Default output device";
+      select.append(auto);
+      for (const device of devices || []) {
+        const option = document.createElement("option");
+        option.value = String(device.index);
+        option.textContent = `[${device.index}] ${device.name}`;
+        select.append(option);
+      }
+      select.value = selected || "";
+    }
+
+    async function loadOptions() {
+      el("saveStatus").textContent = "";
+      const response = await fetch("/api/options", { cache: "no-store" });
+      if (!response.ok) throw new Error(`options ${response.status}`);
+      const payload = await response.json();
+      const options = payload.options || {};
+      for (const id of ids) setField(id, options[id]);
+      renderAudioDevices(payload.audio_devices || [], options.audio_device);
+      return payload;
+    }
+
+    async function saveOptions(event) {
+      event.preventDefault();
+      const options = {};
+      for (const id of ids) options[id] = fieldValue(id);
+      el("saveOptions").disabled = true;
+      el("saveStatus").textContent = "Saving...";
+      try {
+        const response = await fetch("/api/options", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ options })
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || `save ${response.status}`);
+        for (const id of ids) setField(id, payload.options[id]);
+        renderAudioDevices(payload.audio_devices || [], payload.options.audio_device);
+        el("saveStatus").textContent = "Saved. Restart Mara to apply.";
+      } catch (error) {
+        el("saveStatus").textContent = error.message;
+      } finally {
+        el("saveOptions").disabled = false;
+      }
+    }
+
+    async function refreshAll() {
+      try {
+        await loadState();
+        setPill(el("connection"), el("connection").textContent, el("connection").classList.contains("warn") ? "warn" : "good");
+      } catch (error) {
+        setPill(el("connection"), `Disconnected: ${error.message}`, "bad");
+      }
+    }
+
+    el("refresh").addEventListener("click", refreshAll);
+    el("reloadOptions").addEventListener("click", () => loadOptions().catch((error) => {
+      el("saveStatus").textContent = error.message;
+    }));
+    el("optionsForm").addEventListener("submit", saveOptions);
+
+    loadOptions().catch((error) => {
+      el("saveStatus").textContent = error.message;
+    });
+    refreshAll();
+    setInterval(refreshAll, 2000);
+  </script>
+</body>
+</html>

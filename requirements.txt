@@ -1,0 +1,9 @@
+fastapi>=0.115
+numpy>=2.0
+pydantic>=2.9
+requests>=2.32
+sounddevice>=0.5
+soundfile>=0.13
+uvicorn>=0.32
+watchdog>=6.0
+voxcpm
