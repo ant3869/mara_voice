@@ -62,6 +62,42 @@ function Write-Step {
     Write-Host "[mara] $Message" -ForegroundColor Cyan
 }
 
+function Import-DotEnvFile {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    foreach ($rawLine in [System.IO.File]::ReadAllLines($Path)) {
+        $line = $rawLine.Trim()
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith("#")) {
+            continue
+        }
+        if ($line.StartsWith("export ")) {
+            $line = $line.Substring(7).Trim()
+        }
+        $equalsIndex = $line.IndexOf("=")
+        if ($equalsIndex -le 0) {
+            continue
+        }
+
+        $name = $line.Substring(0, $equalsIndex).Trim()
+        $value = $line.Substring($equalsIndex + 1).Trim()
+        if ($name -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+            continue
+        }
+        if ($value.Length -ge 2 -and
+            (($value.StartsWith('"') -and $value.EndsWith('"')) -or
+            ($value.StartsWith("'") -and $value.EndsWith("'")))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        if ([string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($name))) {
+            [Environment]::SetEnvironmentVariable($name, $value, "Process")
+        }
+    }
+}
+
 if ($TtsStreaming -and $NoTtsStreaming) {
     throw "Use either -TtsStreaming or -NoTtsStreaming, not both."
 }
@@ -69,6 +105,8 @@ if ($TtsStreaming -and $NoTtsStreaming) {
 if ($Gui -and $NoGui) {
     throw "Use either -Gui or -NoGui, not both."
 }
+
+Import-DotEnvFile (Join-Path $repoRoot ".env")
 
 $savedConfig = $null
 $regenerateVoiceReferenceFromSavedConfig = $false
@@ -88,6 +126,28 @@ function Test-SavedOption {
     return $null -ne $savedConfig -and
         ($savedConfig.PSObject.Properties.Name -contains $Name) -and
         $null -ne $savedConfig.$Name
+}
+
+function Get-EnvOption {
+    param([string]$Name)
+
+    return [Environment]::GetEnvironmentVariable($Name)
+}
+
+function Test-EnvOption {
+    param([string]$Name)
+
+    return -not [string]::IsNullOrWhiteSpace((Get-EnvOption $Name))
+}
+
+function Get-EnvBool {
+    param([string]$Name)
+
+    $value = (Get-EnvOption $Name)
+    if ($null -eq $value) {
+        return $false
+    }
+    return $value.Trim().ToLowerInvariant() -in @("1", "true", "yes", "on")
 }
 
 function ConvertTo-ProcessArgument {
@@ -160,6 +220,90 @@ function Reset-SavedRegenerateVoiceReference {
     catch {
         Write-Step "Could not clear regenerate_voice_reference in saved GUI options: $($_.Exception.Message)"
     }
+}
+
+if (-not $PSBoundParameters.ContainsKey('AudioDevice') -and (Test-EnvOption "MARA_AUDIO_DEVICE")) {
+    $AudioDevice = Get-EnvOption "MARA_AUDIO_DEVICE"
+}
+
+if (-not $PSBoundParameters.ContainsKey('CaptureDir') -and (Test-EnvOption "MARA_CAPTURE_DIR")) {
+    $CaptureDir = Get-EnvOption "MARA_CAPTURE_DIR"
+}
+
+if (-not $PSBoundParameters.ContainsKey('LogLevel') -and (Test-EnvOption "MARA_LOG_LEVEL")) {
+    $LogLevel = Get-EnvOption "MARA_LOG_LEVEL"
+}
+
+if (-not $PSBoundParameters.ContainsKey('TtsDevice') -and (Test-EnvOption "MARA_TTS_DEVICE")) {
+    $TtsDevice = Get-EnvOption "MARA_TTS_DEVICE"
+}
+
+if (-not $PSBoundParameters.ContainsKey('SshTimeoutSeconds') -and (Test-EnvOption "MARA_SSH_TIMEOUT")) {
+    $SshTimeoutSeconds = [double](Get-EnvOption "MARA_SSH_TIMEOUT")
+}
+
+if (-not $PSBoundParameters.ContainsKey('SshConnectTimeoutSeconds') -and (Test-EnvOption "MARA_SSH_CONNECT_TIMEOUT")) {
+    $SshConnectTimeoutSeconds = [double](Get-EnvOption "MARA_SSH_CONNECT_TIMEOUT")
+}
+
+if (-not $PSBoundParameters.ContainsKey('TtsTimeoutSeconds') -and (Test-EnvOption "MARA_TTS_TIMEOUT")) {
+    $TtsTimeoutSeconds = [double](Get-EnvOption "MARA_TTS_TIMEOUT")
+}
+
+if (-not $PSBoundParameters.ContainsKey('TtsInferenceTimesteps') -and (Test-EnvOption "MARA_TTS_INFERENCE_TIMESTEPS")) {
+    $TtsInferenceTimesteps = [int](Get-EnvOption "MARA_TTS_INFERENCE_TIMESTEPS")
+}
+
+if (-not $PSBoundParameters.ContainsKey('StatusIntervalSeconds') -and (Test-EnvOption "MARA_STATUS_INTERVAL")) {
+    $StatusIntervalSeconds = [double](Get-EnvOption "MARA_STATUS_INTERVAL")
+}
+
+if (-not $PSBoundParameters.ContainsKey('SpokenReplyCharLimit') -and (Test-EnvOption "MARA_SPOKEN_REPLY_CHAR_LIMIT")) {
+    $SpokenReplyCharLimit = [int](Get-EnvOption "MARA_SPOKEN_REPLY_CHAR_LIMIT")
+}
+
+if (-not $PSBoundParameters.ContainsKey('TtsChunkCharLimit') -and (Test-EnvOption "MARA_TTS_CHUNK_CHAR_LIMIT")) {
+    $TtsChunkCharLimit = [int](Get-EnvOption "MARA_TTS_CHUNK_CHAR_LIMIT")
+}
+
+if (-not $PSBoundParameters.ContainsKey('TtsStreamChunkCharLimit') -and (Test-EnvOption "MARA_TTS_STREAM_CHUNK_CHAR_LIMIT")) {
+    $TtsStreamChunkCharLimit = [int](Get-EnvOption "MARA_TTS_STREAM_CHUNK_CHAR_LIMIT")
+}
+
+if (-not $PSBoundParameters.ContainsKey('TtsStreamUrl') -and (Test-EnvOption "MARA_TTS_STREAM_URL")) {
+    $TtsStreamUrl = Get-EnvOption "MARA_TTS_STREAM_URL"
+}
+
+if (-not $PSBoundParameters.ContainsKey('TtsStreaming') -and -not $NoTtsStreaming -and (Test-EnvOption "MARA_TTS_STREAMING")) {
+    $TtsStreaming = Get-EnvBool "MARA_TTS_STREAMING"
+}
+
+if (-not $PSBoundParameters.ContainsKey('HermesCommand') -and (Test-EnvOption "MARA_HERMES_COMMAND")) {
+    $HermesCommand = Get-EnvOption "MARA_HERMES_COMMAND"
+}
+
+if (-not $PSBoundParameters.ContainsKey('ActiveAgent') -and (Test-EnvOption "MARA_ACTIVE_AGENT")) {
+    $ActiveAgent = Get-EnvOption "MARA_ACTIVE_AGENT"
+}
+
+if (-not $PSBoundParameters.ContainsKey('OpenClawBaseUrl') -and (Test-EnvOption "MARA_OPENCLAW_BASE_URL")) {
+    $OpenClawBaseUrl = Get-EnvOption "MARA_OPENCLAW_BASE_URL"
+}
+
+if (-not $PSBoundParameters.ContainsKey('OpenClawModel') -and (Test-EnvOption "MARA_OPENCLAW_MODEL")) {
+    $OpenClawModel = Get-EnvOption "MARA_OPENCLAW_MODEL"
+}
+
+if (-not $PSBoundParameters.ContainsKey('OpenClawTimeoutSeconds') -and (Test-EnvOption "MARA_OPENCLAW_TIMEOUT")) {
+    $OpenClawTimeoutSeconds = [double](Get-EnvOption "MARA_OPENCLAW_TIMEOUT")
+}
+
+if (-not $PSBoundParameters.ContainsKey('VoiceReferencePath') -and (Test-EnvOption "MARA_VOICE_REFERENCE_PATH")) {
+    $VoiceReferencePath = Get-EnvOption "MARA_VOICE_REFERENCE_PATH"
+}
+
+if (-not $PSBoundParameters.ContainsKey('VoiceReferenceText') -and (Test-EnvOption "MARA_VOICE_REFERENCE_TEXT")) {
+    $VoiceReferenceText = Get-EnvOption "MARA_VOICE_REFERENCE_TEXT"
 }
 
 if (-not $PSBoundParameters.ContainsKey('AudioDevice') -and (Test-SavedOption "audio_device")) {

@@ -14,6 +14,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
+from mara_env import load_dotenv
+
+
+load_dotenv()
 
 AGENT_HERMES = "hermes"
 AGENT_OPENCLAW = "openclaw"

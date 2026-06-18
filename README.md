@@ -10,6 +10,10 @@ start_mara.cmd
 
 That launches the voice pipeline and the GUI in dark mode.
 
+## Local env
+
+Copy `.env.example` to `.env` and fill in `MARA_OPENCLAW_API_KEY` before using OpenClaw. `.env` is ignored by git and is loaded by the launcher and Python tools.
+
 ## Notes
 
 - `start_mara.cmd -NoGui` skips the GUI.

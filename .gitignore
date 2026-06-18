@@ -8,6 +8,10 @@ venv/
 *.pyc
 *.log
 
+.env
+.env.local
+.env.*.local
+
 config/mara_voice.local.json
 config/mara_agent_route.runtime.json
 models/mara_voice_reference.wav
