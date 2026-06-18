@@ -37,8 +37,11 @@ def load_dotenv(path: Path | str = DEFAULT_ENV_PATH, override: bool = False) -> 
         key = key.strip()
         if not key or not key.replace("_", "A").isalnum() or key[0].isdigit():
             continue
+        parsed_value = _parse_env_value(value)
+        if parsed_value == "":
+            continue
         if override or key not in os.environ:
-            os.environ[key] = _parse_env_value(value)
+            os.environ[key] = parsed_value
             loaded += 1
 
     return loaded

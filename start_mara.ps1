@@ -92,6 +92,9 @@ function Import-DotEnvFile {
             ($value.StartsWith("'") -and $value.EndsWith("'")))) {
             $value = $value.Substring(1, $value.Length - 2)
         }
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            continue
+        }
         if ([string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($name))) {
             [Environment]::SetEnvironmentVariable($name, $value, "Process")
         }
