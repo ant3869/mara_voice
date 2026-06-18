@@ -26,6 +26,7 @@ from mara_agents import (
     check_openclaw_health,
     redact_url,
 )
+from mara_safety import redact_sensitive_text
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -489,15 +490,16 @@ def run_pipeline(
 
     logger.info("Pipeline started for %d characters", len(normalized_text))
     reply = ask_selected_agent(normalized_text, config, logger)
-    logger.info("Agent reply: %s", reply)
+    safe_reply = redact_sensitive_text(reply)
+    logger.info("Agent reply: %s", safe_reply)
 
     if not play_audio:
         emit_status(logger, "LISTENING", "Ready")
-        return reply
+        return safe_reply
 
-    wav_bytes = synthesize_speech(reply, config, logger, voice_style=voice_style, voice_id=config.active_agent)
+    wav_bytes = synthesize_speech(safe_reply, config, logger, voice_style=voice_style, voice_id=config.active_agent)
     emit_status(logger, "TALKING", "Playing reply")
     play_audio_bytes(wav_bytes, config, logger)
     emit_status(logger, "LISTENING", "Ready")
     logger.info("Pipeline finished successfully")
-    return reply
+    return safe_reply

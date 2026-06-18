@@ -33,6 +33,7 @@ from mara_pipeline import (
     emit_status,
     format_output_devices,
 )
+from mara_safety import redact_sensitive_text
 from mara_streaming import (
     Float32PcmStreamDecoder,
     STREAM_CHANNELS_HEADER,
@@ -335,14 +336,15 @@ class WavCaptureProcessor:
             emit_status(self.logger, "LISTENING", "Waiting for next capture")
             return
 
-        print(f"[You]: {transcribed_text}")
+        safe_transcribed_text = redact_sensitive_text(transcribed_text)
+        print(f"[You]: {safe_transcribed_text}")
         self._append_event(
             "conversation",
             "USER",
             "User transcription",
-            {"text": transcribed_text, "transcription_seconds": round(transcribe_time, 3)},
+            {"text": safe_transcribed_text, "transcription_seconds": round(transcribe_time, 3)},
         )
-        self.logger.info("User said: %s (transcription: %.2fs)", transcribed_text, transcribe_time)
+        self.logger.info("User said: %s (transcription: %.2fs)", safe_transcribed_text, transcribe_time)
 
         ssh_start = time.monotonic()
         emit_status(self.logger, "THINKING", "Sending text to Mara")
@@ -352,14 +354,15 @@ class WavCaptureProcessor:
             emit_status(self.logger, "LISTENING", "Waiting for next capture")
             return
         mara_reply = agent_reply.text
+        safe_mara_reply = redact_sensitive_text(mara_reply)
 
-        print(f"[Mara]: {mara_reply}")
+        print(f"[Mara]: {safe_mara_reply}")
         self._append_event(
             "conversation",
             "MARA",
             f"{agent_reply.agent_name} reply",
             {
-                "text": mara_reply,
+                "text": safe_mara_reply,
                 "agent": agent_reply.agent_id,
                 "agent_name": agent_reply.agent_name,
                 "agent_seconds": round(agent_reply.elapsed_seconds, 3),
@@ -369,14 +372,14 @@ class WavCaptureProcessor:
         self.logger.info(
             "%s replied: %s (agent: %.2fs)",
             agent_reply.agent_name,
-            mara_reply,
+            safe_mara_reply,
             agent_reply.elapsed_seconds,
         )
-        spoken_reply = prepare_spoken_reply(mara_reply, self.spoken_reply_char_limit)
-        if spoken_reply != " ".join(mara_reply.split()):
+        spoken_reply = prepare_spoken_reply(safe_mara_reply, self.spoken_reply_char_limit)
+        if spoken_reply != " ".join(safe_mara_reply.split()):
             self.logger.info(
                 "Shortened spoken reply from %d to %d characters for faster TTS",
-                len(" ".join(mara_reply.split())),
+                len(" ".join(safe_mara_reply.split())),
                 len(spoken_reply),
             )
 

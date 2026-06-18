@@ -7,6 +7,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from mara_safety import redact_sensitive, redact_sensitive_text
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_EVENT_LOG_PATH = Path(
@@ -32,8 +34,8 @@ def append_event(
         "pid": os.getpid(),
         "type": event_type,
         "status": status,
-        "message": message,
-        "details": details or {},
+        "message": redact_sensitive_text(message),
+        "details": redact_sensitive(details or {}),
     }
     path = event_log_path or DEFAULT_EVENT_LOG_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -60,5 +62,5 @@ def read_recent_events(
         except json.JSONDecodeError:
             continue
         if isinstance(payload, dict):
-            events.append(payload)
+            events.append(redact_sensitive(payload))
     return events
