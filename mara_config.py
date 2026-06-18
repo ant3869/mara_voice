@@ -12,6 +12,7 @@ DEFAULT_CONFIG_PATH = BASE_DIR / "config" / "mara_voice.local.json"
 OPTION_SCHEMA: dict[str, dict[str, Any]] = {
     "tts_streaming": {"type": "bool", "default": False, "restart_required": True},
     "tts_stream_chunk_char_limit": {"type": "int", "default": 180, "min": 40, "max": 12000, "restart_required": True},
+    "tts_stream_prebuffer_seconds": {"type": "float", "default": 8.0, "min": 0.0, "max": 30.0, "restart_required": True},
     "spoken_reply_char_limit": {"type": "int", "default": 900, "min": 0, "max": 12000, "restart_required": True},
     "tts_chunk_char_limit": {"type": "int", "default": 450, "min": 0, "max": 12000, "restart_required": True},
     "tts_inference_timesteps": {"type": "int", "default": 8, "min": 1, "max": 50, "restart_required": True},

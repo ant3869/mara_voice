@@ -63,6 +63,7 @@ DEFAULT_TTS_CHUNK_CHAR_LIMIT = int(os.getenv("MARA_TTS_CHUNK_CHAR_LIMIT", "450")
 DEFAULT_TTS_STREAMING = os.getenv("MARA_TTS_STREAMING", "0") == "1"
 DEFAULT_TTS_STREAM_URL = os.getenv("MARA_TTS_STREAM_URL", "http://127.0.0.1:8000/tts/stream")
 DEFAULT_TTS_STREAM_CHUNK_CHAR_LIMIT = int(os.getenv("MARA_TTS_STREAM_CHUNK_CHAR_LIMIT", "180"))
+DEFAULT_TTS_STREAM_PREBUFFER_SECONDS = float(os.getenv("MARA_TTS_STREAM_PREBUFFER_SECONDS", "8"))
 
 
 def parse_optional_timeout(value: str | None, default: float | None) -> float | None:
@@ -169,6 +170,7 @@ class WavCaptureProcessor:
         tts_chunk_char_limit: int = DEFAULT_TTS_CHUNK_CHAR_LIMIT,
         tts_streaming: bool = DEFAULT_TTS_STREAMING,
         tts_stream_chunk_char_limit: int = DEFAULT_TTS_STREAM_CHUNK_CHAR_LIMIT,
+        tts_stream_prebuffer_seconds: float = DEFAULT_TTS_STREAM_PREBUFFER_SECONDS,
     ) -> None:
         self.capture_dir = capture_dir
         self.ssh_target = ssh_target
@@ -193,6 +195,7 @@ class WavCaptureProcessor:
         self.tts_chunk_char_limit = max(0, tts_chunk_char_limit)
         self.tts_streaming = tts_streaming
         self.tts_stream_chunk_char_limit = max(40, tts_stream_chunk_char_limit)
+        self.tts_stream_prebuffer_seconds = max(0.0, tts_stream_prebuffer_seconds)
         self.voicebox_session = requests.Session()
         self.tts_session = requests.Session()
         self.agent_session = requests.Session()
@@ -651,10 +654,40 @@ class WavCaptureProcessor:
 
         decoder = Float32PcmStreamDecoder(channels=channels)
         stream = None
+        prebuffer_chunks = []
+        prebuffer_samples = 0
+        prebuffer_target_samples = int(sample_rate * self.tts_stream_prebuffer_seconds)
         audio_chunk_count = 0
         sample_count = 0
         start_time = time.monotonic()
         next_status_time = self.status_interval_seconds
+
+        def start_stream_if_needed() -> None:
+            nonlocal stream, prebuffer_chunks, prebuffer_samples
+            if stream is not None:
+                return
+            if segment_count == 1:
+                print("[Streaming Mara's response...]")
+            else:
+                print(f"[Streaming Mara's response chunk {chunk_index}/{segment_count}...]")
+            stream = sd.OutputStream(
+                samplerate=sample_rate,
+                channels=channels,
+                dtype="float32",
+                device=self.audio_device,
+                latency="high",
+            )
+            stream.start()
+            if prebuffer_samples:
+                self.logger.info(
+                    "Starting %s after buffering %.2fs of audio",
+                    descriptor,
+                    prebuffer_samples / float(sample_rate),
+                )
+            for buffered_chunk in prebuffer_chunks:
+                stream.write(buffered_chunk)
+            prebuffer_chunks = []
+            prebuffer_samples = 0
 
         try:
             emit_status(self.logger, "TALKING", f"Streaming {descriptor}")
@@ -664,22 +697,15 @@ class WavCaptureProcessor:
                     if audio_chunk is None:
                         continue
 
-                    if stream is None:
-                        if segment_count == 1:
-                            print("[Streaming Mara's response...]")
-                        else:
-                            print(f"[Streaming Mara's response chunk {chunk_index}/{segment_count}...]")
-                        stream = sd.OutputStream(
-                            samplerate=sample_rate,
-                            channels=channels,
-                            dtype="float32",
-                            device=self.audio_device,
-                        )
-                        stream.start()
-
-                    stream.write(audio_chunk)
                     audio_chunk_count += 1
                     sample_count += len(audio_chunk)
+                    if stream is None:
+                        prebuffer_chunks.append(audio_chunk)
+                        prebuffer_samples += len(audio_chunk)
+                        if prebuffer_target_samples <= 0 or prebuffer_samples >= prebuffer_target_samples:
+                            start_stream_if_needed()
+                    else:
+                        stream.write(audio_chunk)
 
                     elapsed = time.monotonic() - start_time
                     if self.status_interval_seconds and elapsed >= next_status_time:
@@ -689,6 +715,9 @@ class WavCaptureProcessor:
                             f"Streaming {descriptor} ({audio_chunk_count} audio chunks, {elapsed:.0f}s elapsed)",
                         )
                         next_status_time += self.status_interval_seconds
+
+            if stream is None and prebuffer_chunks:
+                start_stream_if_needed()
 
             if stream is None:
                 self.logger.error("Streaming TTS returned no playable audio chunks for %s", descriptor)
@@ -929,6 +958,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TTS_STREAM_CHUNK_CHAR_LIMIT,
         help="Maximum characters per true-streaming TTS segment. Smaller values start and complete segments faster.",
     )
+    parser.add_argument(
+        "--tts-stream-prebuffer-seconds",
+        type=float,
+        default=DEFAULT_TTS_STREAM_PREBUFFER_SECONDS,
+        help="Seconds of streaming audio to buffer before playback to avoid static/choppy underruns.",
+    )
     streaming_group = parser.add_mutually_exclusive_group()
     streaming_group.add_argument(
         "--tts-streaming",
@@ -985,6 +1020,7 @@ def main() -> int:
     logger.info("Spoken reply character limit: %s", args.spoken_reply_char_limit or "disabled")
     logger.info("TTS playback chunk character limit: %s", args.tts_chunk_char_limit or "disabled")
     logger.info("TTS streaming chunk character limit: %s", args.tts_stream_chunk_char_limit)
+    logger.info("TTS streaming prebuffer: %.2fs", args.tts_stream_prebuffer_seconds)
     logger.info("TTS streaming: %s", "enabled" if args.tts_streaming else "disabled")
     if args.audio_device:
         logger.info("Audio device: %s", args.audio_device)
@@ -1022,6 +1058,7 @@ def main() -> int:
         tts_chunk_char_limit=args.tts_chunk_char_limit,
         tts_streaming=args.tts_streaming,
         tts_stream_chunk_char_limit=args.tts_stream_chunk_char_limit,
+        tts_stream_prebuffer_seconds=args.tts_stream_prebuffer_seconds,
     )
 
     if WATCHDOG_AVAILABLE and not args.force_polling:

@@ -20,6 +20,8 @@ def audio_to_pcm_f32le(audio: Any) -> bytes:
         array = array.reshape(1)
     if array.ndim > 2:
         raise ValueError(f"Expected mono or stereo audio, got shape {array.shape}")
+    array = np.nan_to_num(array, nan=0.0, posinf=1.0, neginf=-1.0)
+    array = np.clip(array, -1.0, 1.0)
     return np.ascontiguousarray(array.astype("<f4", copy=False)).tobytes()
 
 

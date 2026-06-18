@@ -12,6 +12,7 @@ param(
     [int]$SpokenReplyCharLimit = 900,
     [int]$TtsChunkCharLimit = 450,
     [int]$TtsStreamChunkCharLimit = 180,
+    [double]$TtsStreamPrebufferSeconds = 8,
     [string]$TtsStreamUrl,
     [string]$ConfigPath,
     [string]$HermesCommand,
@@ -273,6 +274,10 @@ if (-not $PSBoundParameters.ContainsKey('TtsStreamChunkCharLimit') -and (Test-En
     $TtsStreamChunkCharLimit = [int](Get-EnvOption "MARA_TTS_STREAM_CHUNK_CHAR_LIMIT")
 }
 
+if (-not $PSBoundParameters.ContainsKey('TtsStreamPrebufferSeconds') -and (Test-EnvOption "MARA_TTS_STREAM_PREBUFFER_SECONDS")) {
+    $TtsStreamPrebufferSeconds = [double](Get-EnvOption "MARA_TTS_STREAM_PREBUFFER_SECONDS")
+}
+
 if (-not $PSBoundParameters.ContainsKey('TtsStreamUrl') -and (Test-EnvOption "MARA_TTS_STREAM_URL")) {
     $TtsStreamUrl = Get-EnvOption "MARA_TTS_STREAM_URL"
 }
@@ -354,6 +359,10 @@ if (-not $PSBoundParameters.ContainsKey('TtsChunkCharLimit') -and (Test-SavedOpt
 
 if (-not $PSBoundParameters.ContainsKey('TtsStreamChunkCharLimit') -and (Test-SavedOption "tts_stream_chunk_char_limit")) {
     $TtsStreamChunkCharLimit = [int]$savedConfig.tts_stream_chunk_char_limit
+}
+
+if (-not $PSBoundParameters.ContainsKey('TtsStreamPrebufferSeconds') -and (Test-SavedOption "tts_stream_prebuffer_seconds")) {
+    $TtsStreamPrebufferSeconds = [double]$savedConfig.tts_stream_prebuffer_seconds
 }
 
 if ($NoTtsStreaming) {
@@ -467,6 +476,10 @@ function Test-TtsHealthUsable {
         }
 
         if (-not [bool]$Health.streaming_supported) {
+            return $false
+        }
+
+        if (-not ($Health.PSObject.Properties.Name -contains "stream_pcm_sanitized")) {
             return $false
         }
     }
@@ -609,6 +622,10 @@ function Format-TtsHealthProblem {
 
         if (-not [bool]$Health.streaming_supported) {
             return "The server reports streaming_supported=false, but this launch requested -TtsStreaming."
+        }
+
+        if (-not ($Health.PSObject.Properties.Name -contains "stream_pcm_sanitized")) {
+            return "The server does not report sanitized streaming PCM. Stop the old TTS server and start again."
         }
     }
 
@@ -998,6 +1015,8 @@ $listenerArguments = @(
     ([string]$TtsChunkCharLimit),
     "--tts-stream-chunk-char-limit",
     ([string]$TtsStreamChunkCharLimit),
+    "--tts-stream-prebuffer-seconds",
+    ([string]$TtsStreamPrebufferSeconds),
     "--active-agent",
     $ActiveAgent,
     "--agent-route-state-path",

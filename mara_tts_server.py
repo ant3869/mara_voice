@@ -370,6 +370,7 @@ def healthz() -> dict[str, object]:
         "voice_profiles": profiles,
         "voice_generation_mode": VOICE_GENERATION_MODE if VOICE_REFERENCE_ENABLED else "voice_design",
         "streaming_supported": True,
+        "stream_pcm_sanitized": True,
         "stream_media_type": STREAM_MEDIA_TYPE,
     }
 

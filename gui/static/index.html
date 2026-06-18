@@ -415,6 +415,10 @@
                 <input id="tts_stream_chunk_char_limit" name="tts_stream_chunk_char_limit" type="number" min="40" max="12000" required title="Chunk size used before calling the true streaming endpoint.">
                 <span class="help">Example: 180-260 starts long replies faster; 0 is not allowed for true streaming.</span>
               </label>
+              <label>Streaming prebuffer seconds
+                <input id="tts_stream_prebuffer_seconds" name="tts_stream_prebuffer_seconds" type="number" min="0" max="30" step="0.5" required title="Audio buffered before streaming playback starts. Higher reduces static/choppy underruns.">
+                <span class="help">Example: 8 is safer; 2 starts faster but may chop if generation is slower than playback.</span>
+              </label>
               <label>TTS inference steps
                 <input id="tts_inference_timesteps" name="tts_inference_timesteps" type="number" min="1" max="50" required title="Lower is faster, higher can sound cleaner.">
                 <span class="help">Example: 6 is faster; 8 is current default; 10 is slower/older default.</span>
@@ -498,7 +502,8 @@
   <script>
     const ids = [
       "tts_streaming", "regenerate_voice_reference", "spoken_reply_char_limit",
-      "tts_chunk_char_limit", "tts_stream_chunk_char_limit", "tts_inference_timesteps", "tts_timeout_seconds",
+      "tts_chunk_char_limit", "tts_stream_chunk_char_limit", "tts_stream_prebuffer_seconds",
+      "tts_inference_timesteps", "tts_timeout_seconds",
       "ssh_timeout_seconds", "ssh_connect_timeout_seconds", "status_interval_seconds",
       "active_agent", "openclaw_base_url", "openclaw_model", "openclaw_timeout_seconds",
       "audio_device", "tts_device", "capture_dir", "hermes_command",

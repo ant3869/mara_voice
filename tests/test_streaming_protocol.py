@@ -59,6 +59,12 @@ class StreamingProtocolTests(unittest.TestCase):
         self.assertFalse(decoder.has_pending_bytes())
         np.testing.assert_allclose(decoded, samples)
 
+    def test_audio_to_pcm_clips_non_finite_and_out_of_range_samples(self) -> None:
+        samples = np.array([np.nan, np.inf, -np.inf, 1.5, -2.0, 0.25], dtype=np.float32)
+        decoded = np.frombuffer(audio_to_pcm_f32le(samples), dtype="<f4")
+
+        np.testing.assert_allclose(decoded, np.array([0.0, 1.0, -1.0, 1.0, -1.0, 0.25], dtype=np.float32))
+
     def test_stream_tts_endpoint_emits_float32_pcm(self) -> None:
         original_ensure_model_loaded = mara_tts_server.ensure_model_loaded
         original_ensure_voice_prompt_cache = mara_tts_server.ensure_voice_prompt_cache
