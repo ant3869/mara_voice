@@ -65,7 +65,7 @@ class StreamingProtocolTests(unittest.TestCase):
         original_seed_generation = mara_tts_server.seed_generation
 
         mara_tts_server.ensure_model_loaded = lambda: FakeModel()
-        mara_tts_server.ensure_voice_prompt_cache = lambda _model: {"mode": "reference"}
+        mara_tts_server.ensure_voice_prompt_cache = lambda _model, _voice_id=None: {"mode": "reference"}
         mara_tts_server.seed_generation = lambda: None
         try:
             client = TestClient(mara_tts_server.app)
@@ -82,6 +82,26 @@ class StreamingProtocolTests(unittest.TestCase):
         self.assertEqual(response.headers[STREAM_DTYPE_HEADER], STREAM_DTYPE)
         decoded = np.frombuffer(response.content, dtype="<f4")
         np.testing.assert_allclose(decoded, np.array([0.0, 0.25, 0.5, 0.75], dtype=np.float32))
+
+    def test_stream_tts_passes_openclaw_voice_id_to_prompt_cache(self) -> None:
+        original_ensure_model_loaded = mara_tts_server.ensure_model_loaded
+        original_ensure_voice_prompt_cache = mara_tts_server.ensure_voice_prompt_cache
+        original_seed_generation = mara_tts_server.seed_generation
+        seen_voice_ids: list[str | None] = []
+
+        mara_tts_server.ensure_model_loaded = lambda: FakeModel()
+        mara_tts_server.ensure_voice_prompt_cache = lambda _model, voice_id=None: seen_voice_ids.append(voice_id) or {"mode": "reference"}
+        mara_tts_server.seed_generation = lambda: None
+        try:
+            client = TestClient(mara_tts_server.app)
+            response = client.post("/tts/stream", json={"text": "hello", "voice_id": "openclaw"})
+        finally:
+            mara_tts_server.ensure_model_loaded = original_ensure_model_loaded
+            mara_tts_server.ensure_voice_prompt_cache = original_ensure_voice_prompt_cache
+            mara_tts_server.seed_generation = original_seed_generation
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(seen_voice_ids, ["openclaw"])
 
 
 if __name__ == "__main__":

@@ -487,6 +487,14 @@ function Test-TtsHealthUsable {
         return $false
     }
 
+    if (-not ($Health.PSObject.Properties.Name -contains "voice_profiles")) {
+        return $false
+    }
+
+    if (-not ($Health.voice_profiles.PSObject.Properties.Name -contains "openclaw")) {
+        return $false
+    }
+
     if ($Health.voice_generation_mode -ne $requiredVoiceGenerationMode) {
         return $false
     }
@@ -547,6 +555,14 @@ function Format-TtsHealthProblem {
     if (-not $DisableVoiceReference) {
         if (-not ($Health.PSObject.Properties.Name -contains "voice_generation_mode")) {
             return "The server does not report voice generation mode. Stop the old TTS server and start again."
+        }
+
+        if (-not ($Health.PSObject.Properties.Name -contains "voice_profiles")) {
+            return "The server does not report per-agent voice profiles. Stop the old TTS server and start again."
+        }
+
+        if (-not ($Health.voice_profiles.PSObject.Properties.Name -contains "openclaw")) {
+            return "The server does not report the OpenClaw voice profile. Stop the old TTS server and start again."
         }
 
         if ($Health.voice_generation_mode -ne $requiredVoiceGenerationMode) {

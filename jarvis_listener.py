@@ -379,7 +379,7 @@ class WavCaptureProcessor:
 
         tts_start = time.monotonic()
         emit_status(self.logger, "TALKING", "Generating and playing reply")
-        self._play_tts_reply(spoken_reply)
+        self._play_tts_reply(spoken_reply, voice_id=agent_reply.agent_id)
         tts_time = time.monotonic() - tts_start
         total_time = time.monotonic() - pipeline_start
         self.logger.info("Pipeline complete (TTS: %.2fs, total: %.2fs)", tts_time, total_time)
@@ -455,10 +455,10 @@ class WavCaptureProcessor:
             self.logger.error("Agent request failed: %s", exc)
             return None
 
-    def _request_tts_audio(self, text: str, timeout_seconds: float | None) -> bytes | None:
+    def _request_tts_audio(self, text: str, timeout_seconds: float | None, voice_id: str) -> bytes | None:
         response = self.tts_session.post(
             self.tts_url,
-            json={"text": text},
+            json={"text": text, "voice_id": voice_id},
             timeout=timeout_seconds,
         )
         response.raise_for_status()
@@ -474,6 +474,7 @@ class WavCaptureProcessor:
         text: str,
         chunk_index: int = 1,
         chunk_count: int = 1,
+        voice_id: str = "hermes",
     ) -> bytes | None:
         attempt_count = self.tts_retry_attempts + 1
         descriptor = "voice reply" if chunk_count == 1 else f"voice chunk {chunk_index}/{chunk_count}"
@@ -492,7 +493,7 @@ class WavCaptureProcessor:
             try:
                 emit_status(self.logger, "WRITING", f"Rendering {descriptor}")
                 return self._run_with_heartbeat(
-                    lambda: self._request_tts_audio(text, timeout_seconds),
+                    lambda: self._request_tts_audio(text, timeout_seconds, voice_id),
                     "WRITING",
                     f"Still rendering {descriptor}",
                 )
@@ -562,19 +563,19 @@ class WavCaptureProcessor:
             self.logger.error("Audio playback failed: %s", exc)
             return False
 
-    def _prefetch_tts_audio(self, text: str, chunk_index: int, chunk_count: int):
+    def _prefetch_tts_audio(self, text: str, chunk_index: int, chunk_count: int, voice_id: str):
         result_queue: Queue[bytes | None] = Queue(maxsize=1)
 
         def worker() -> None:
-            result_queue.put(self._request_tts_audio_with_retries(text, chunk_index, chunk_count))
+            result_queue.put(self._request_tts_audio_with_retries(text, chunk_index, chunk_count, voice_id))
 
         Thread(target=worker, daemon=True).start()
         return result_queue
 
-    def _open_tts_stream(self, text: str, timeout_seconds: float | None):
+    def _open_tts_stream(self, text: str, timeout_seconds: float | None, voice_id: str):
         response = self.tts_session.post(
             self.tts_stream_url,
-            json={"text": text},
+            json={"text": text, "voice_id": voice_id},
             timeout=timeout_seconds,
             stream=True,
         )
@@ -603,7 +604,13 @@ class WavCaptureProcessor:
 
         return response, sample_rate, channels
 
-    def _play_tts_reply_streaming(self, text: str, chunk_index: int = 1, segment_count: int = 1) -> bool:
+    def _play_tts_reply_streaming(
+        self,
+        text: str,
+        chunk_index: int = 1,
+        segment_count: int = 1,
+        voice_id: str = "hermes",
+    ) -> bool:
         attempt_count = self.tts_retry_attempts + 1
         response = None
         sample_rate = 0
@@ -621,10 +628,10 @@ class WavCaptureProcessor:
                 attempt_count,
                 format_timeout(timeout_seconds),
                 len(text),
-            )
+                )
             try:
                 emit_status(self.logger, "WRITING", f"Opening {descriptor}")
-                response, sample_rate, channels = self._open_tts_stream(text, timeout_seconds)
+                response, sample_rate, channels = self._open_tts_stream(text, timeout_seconds, voice_id)
                 break
             except requests.Timeout as exc:
                 if attempt < attempt_count:
@@ -708,7 +715,7 @@ class WavCaptureProcessor:
                 except Exception as exc:
                     self.logger.debug("Could not close streaming audio output cleanly: %s", exc)
 
-    def _play_tts_reply_streaming_segments(self, text: str) -> bool:
+    def _play_tts_reply_streaming_segments(self, text: str, voice_id: str) -> bool:
         stream_chunks = split_text_for_tts(text, self.tts_stream_chunk_char_limit)
         if not stream_chunks:
             self.logger.warning("No text available for streaming TTS playback")
@@ -724,14 +731,14 @@ class WavCaptureProcessor:
             emit_status(self.logger, "TALKING", f"Streaming reply in {stream_chunk_count} chunks")
 
         for index, chunk in enumerate(stream_chunks, start=1):
-            if not self._play_tts_reply_streaming(chunk, index, stream_chunk_count):
+            if not self._play_tts_reply_streaming(chunk, index, stream_chunk_count, voice_id):
                 return False
 
         return True
 
-    def _play_tts_reply(self, text: str) -> None:
+    def _play_tts_reply(self, text: str, voice_id: str = "hermes") -> None:
         if self.tts_streaming:
-            if self._play_tts_reply_streaming_segments(text):
+            if self._play_tts_reply_streaming_segments(text, voice_id):
                 return
             self.logger.warning("Falling back to WAV/chunked TTS playback after streaming failure")
 
@@ -749,13 +756,13 @@ class WavCaptureProcessor:
             )
             emit_status(self.logger, "TALKING", f"Playing reply in {chunk_count} chunks")
 
-        audio_queue = self._prefetch_tts_audio(chunks[0], 1, chunk_count)
+        audio_queue = self._prefetch_tts_audio(chunks[0], 1, chunk_count, voice_id)
         for index in range(1, chunk_count + 1):
             audio_bytes = audio_queue.get()
 
             next_audio_queue = None
             if index < chunk_count:
-                next_audio_queue = self._prefetch_tts_audio(chunks[index], index + 1, chunk_count)
+                next_audio_queue = self._prefetch_tts_audio(chunks[index], index + 1, chunk_count, voice_id)
 
             if audio_bytes is None:
                 self.logger.error("TTS did not return audio bytes for chunk %d/%d", index, chunk_count)

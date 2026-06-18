@@ -16,6 +16,8 @@ config/mara_voice.local.json
 config/mara_agent_route.runtime.json
 models/mara_voice_reference.wav
 models/mara_voice_reference.wav.json
+models/openclaw_voice_reference.wav
+models/openclaw_voice_reference.wav.json
 models/VoxCPM2/.cache/
 models/VoxCPM2/audiovae.pth
 models/VoxCPM2/model.safetensors

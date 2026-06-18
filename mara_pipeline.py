@@ -408,15 +408,19 @@ def synthesize_speech(
     config: PipelineConfig,
     logger: logging.Logger,
     voice_style: str | None = None,
+    voice_id: str | None = None,
 ) -> bytes:
     payload: dict[str, Any] = {"text": text}
     if voice_style:
         payload["voice_style"] = voice_style
+    if voice_id:
+        payload["voice_id"] = voice_id
 
     emit_status(logger, "WRITING", "Composing voice reply")
     logger.info(
-        "Requesting TTS audio from %s (timeout=%s)",
+        "Requesting TTS audio from %s (voice_id=%s, timeout=%s)",
         config.tts_url,
+        voice_id or "hermes",
         format_timeout(config.tts_timeout_seconds),
     )
     start_time = time.perf_counter()
@@ -491,7 +495,7 @@ def run_pipeline(
         emit_status(logger, "LISTENING", "Ready")
         return reply
 
-    wav_bytes = synthesize_speech(reply, config, logger, voice_style=voice_style)
+    wav_bytes = synthesize_speech(reply, config, logger, voice_style=voice_style, voice_id=config.active_agent)
     emit_status(logger, "TALKING", "Playing reply")
     play_audio_bytes(wav_bytes, config, logger)
     emit_status(logger, "LISTENING", "Ready")
