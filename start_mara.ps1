@@ -15,6 +15,11 @@ param(
     [string]$TtsStreamUrl,
     [string]$ConfigPath,
     [string]$HermesCommand,
+    [string]$ActiveAgent = "hermes",
+    [string]$AgentRouteStatePath,
+    [string]$OpenClawBaseUrl = "http://192.168.0.65:8645/v1",
+    [string]$OpenClawModel = "gemini 3.1 pro",
+    [double]$OpenClawTimeoutSeconds = 600,
     [string]$VoiceReferencePath,
     [string]$VoiceReferenceText,
     [switch]$DisableVoiceReference,
@@ -45,6 +50,7 @@ $ttsStderrLog = Join-Path $logDir "start_mara_tts.stderr.log"
 $guiStdoutLog = Join-Path $logDir "start_mara_gui.stdout.log"
 $guiStderrLog = Join-Path $logDir "start_mara_gui.stderr.log"
 $resolvedConfigPath = if ($ConfigPath) { $ConfigPath } else { Join-Path $repoRoot "config\mara_voice.local.json" }
+$resolvedAgentRouteStatePath = if ($AgentRouteStatePath) { $AgentRouteStatePath } else { Join-Path $repoRoot "config\mara_agent_route.runtime.json" }
 $ttsUrl = "http://127.0.0.1:8000/tts"
 $ttsHealthUrl = "http://127.0.0.1:8000/healthz"
 $guiUrl = "http://$GuiHost`:$GuiPort"
@@ -215,6 +221,36 @@ if (-not $PSBoundParameters.ContainsKey('HermesCommand') -and (Test-SavedOption 
     if (-not [string]::IsNullOrWhiteSpace($savedHermesCommand)) {
         $HermesCommand = $savedHermesCommand
     }
+}
+
+if (-not $PSBoundParameters.ContainsKey('ActiveAgent') -and (Test-SavedOption "active_agent")) {
+    $savedActiveAgent = [string]$savedConfig.active_agent
+    if (-not [string]::IsNullOrWhiteSpace($savedActiveAgent)) {
+        $ActiveAgent = $savedActiveAgent
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey('OpenClawBaseUrl') -and (Test-SavedOption "openclaw_base_url")) {
+    $savedOpenClawBaseUrl = [string]$savedConfig.openclaw_base_url
+    if (-not [string]::IsNullOrWhiteSpace($savedOpenClawBaseUrl)) {
+        $OpenClawBaseUrl = $savedOpenClawBaseUrl
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey('OpenClawModel') -and (Test-SavedOption "openclaw_model")) {
+    $savedOpenClawModel = [string]$savedConfig.openclaw_model
+    if (-not [string]::IsNullOrWhiteSpace($savedOpenClawModel)) {
+        $OpenClawModel = $savedOpenClawModel
+    }
+}
+
+if (-not $PSBoundParameters.ContainsKey('OpenClawTimeoutSeconds') -and (Test-SavedOption "openclaw_timeout_seconds")) {
+    $OpenClawTimeoutSeconds = [double]$savedConfig.openclaw_timeout_seconds
+}
+
+$ActiveAgent = $ActiveAgent.Trim().ToLowerInvariant()
+if ($ActiveAgent -notin @("hermes", "openclaw")) {
+    throw "ActiveAgent must be 'hermes' or 'openclaw'."
 }
 
 if (-not $PSBoundParameters.ContainsKey('VoiceReferencePath') -and (Test-SavedOption "voice_reference_path")) {
@@ -704,6 +740,14 @@ $diagnosticsArgs = @(
     "--diagnose",
     "--log-level",
     $LogLevel,
+    "--active-agent",
+    $ActiveAgent,
+    "--openclaw-base-url",
+    $OpenClawBaseUrl,
+    "--openclaw-model",
+    $OpenClawModel,
+    "--openclaw-timeout",
+    ([string]$OpenClawTimeoutSeconds),
     "--tts-url",
     $ttsUrl,
     "--tts-health-url",
@@ -740,6 +784,8 @@ if ($Gui) {
             ([string]$GuiPort),
             "--config-path",
             $resolvedConfigPath,
+            "--agent-route-state-path",
+            $resolvedAgentRouteStatePath,
             "--event-log",
             (Join-Path $logDir "mara_events.jsonl"),
             "--tts-health-url",
@@ -788,7 +834,17 @@ $listenerArguments = @(
     "--tts-chunk-char-limit",
     ([string]$TtsChunkCharLimit),
     "--tts-stream-chunk-char-limit",
-    ([string]$TtsStreamChunkCharLimit)
+    ([string]$TtsStreamChunkCharLimit),
+    "--active-agent",
+    $ActiveAgent,
+    "--agent-route-state-path",
+    $resolvedAgentRouteStatePath,
+    "--openclaw-base-url",
+    $OpenClawBaseUrl,
+    "--openclaw-model",
+    $OpenClawModel,
+    "--openclaw-timeout",
+    ([string]$OpenClawTimeoutSeconds)
 )
 
 if ($TtsStreaming) {

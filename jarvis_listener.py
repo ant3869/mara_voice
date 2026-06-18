@@ -3,8 +3,6 @@ from __future__ import annotations
 import argparse
 import io
 import os
-import shlex
-import subprocess
 import time
 from queue import Empty, Queue
 from pathlib import Path
@@ -14,6 +12,18 @@ import requests
 import sounddevice as sd
 import soundfile as sf
 
+from mara_agent_state import DEFAULT_AGENT_ROUTE_STATE_PATH, consume_agent_route, update_agent_route_state
+from mara_agents import (
+    DEFAULT_ACTIVE_AGENT,
+    DEFAULT_OPENCLAW_BASE_URL,
+    DEFAULT_OPENCLAW_MODEL,
+    DEFAULT_OPENCLAW_TIMEOUT_SECONDS,
+    AgentError,
+    AgentReply,
+    AgentSettings,
+    ask_agent,
+    redact_url,
+)
 from mara_events import append_event
 from mara_pipeline import (
     DEFAULT_CAPTURE_DIR,
@@ -139,13 +149,18 @@ class WavCaptureProcessor:
         capture_dir: Path,
         ssh_target: str,
         hermes_command: str,
+        active_agent: str,
+        openclaw_base_url: str,
+        openclaw_model: str,
         tts_url: str,
         tts_stream_url: str,
         audio_device: str | None,
         logger,
+        agent_route_state_path: Path = DEFAULT_AGENT_ROUTE_STATE_PATH,
         dedupe_window_seconds: float = 2.0,
         transcribe_timeout_seconds: float = DEFAULT_TRANSCRIBE_TIMEOUT_SECONDS,
         ssh_timeout_seconds: float | None = DEFAULT_SSH_TIMEOUT_SECONDS,
+        openclaw_timeout_seconds: float | None = DEFAULT_OPENCLAW_TIMEOUT_SECONDS,
         tts_timeout_seconds: float | None = DEFAULT_TTS_TIMEOUT_SECONDS,
         tts_retry_attempts: int = DEFAULT_TTS_RETRY_ATTEMPTS,
         status_interval_seconds: float = DEFAULT_STATUS_INTERVAL_SECONDS,
@@ -158,13 +173,18 @@ class WavCaptureProcessor:
         self.capture_dir = capture_dir
         self.ssh_target = ssh_target
         self.hermes_command = hermes_command
+        self.active_agent = active_agent
+        self.openclaw_base_url = openclaw_base_url
+        self.openclaw_model = openclaw_model
         self.tts_url = tts_url
         self.tts_stream_url = tts_stream_url
         self.audio_device = audio_device
         self.logger = logger
+        self.agent_route_state_path = agent_route_state_path
         self.dedupe_window_seconds = dedupe_window_seconds
         self.transcribe_timeout_seconds = transcribe_timeout_seconds
         self.ssh_timeout_seconds = ssh_timeout_seconds
+        self.openclaw_timeout_seconds = openclaw_timeout_seconds
         self.tts_timeout_seconds = tts_timeout_seconds
         self.tts_retry_attempts = max(0, tts_retry_attempts)
         self.status_interval_seconds = max(0.0, status_interval_seconds)
@@ -175,6 +195,7 @@ class WavCaptureProcessor:
         self.tts_stream_chunk_char_limit = max(40, tts_stream_chunk_char_limit)
         self.voicebox_session = requests.Session()
         self.tts_session = requests.Session()
+        self.agent_session = requests.Session()
         self.recent_files: dict[Path, float] = {}
         self.processed_files: dict[Path, float] = {}
         self.processed_file_retention_seconds = 24 * 60 * 60
@@ -322,20 +343,32 @@ class WavCaptureProcessor:
 
         ssh_start = time.monotonic()
         emit_status(self.logger, "THINKING", "Sending text to Mara")
-        mara_reply = self._send_to_mara(transcribed_text)
+        agent_reply = self._send_to_agent(transcribed_text)
         ssh_time = time.monotonic() - ssh_start
-        if not mara_reply:
+        if agent_reply is None:
             emit_status(self.logger, "LISTENING", "Waiting for next capture")
             return
+        mara_reply = agent_reply.text
 
         print(f"[Mara]: {mara_reply}")
         self._append_event(
             "conversation",
             "MARA",
-            "Hermes reply",
-            {"text": mara_reply, "ssh_seconds": round(ssh_time, 3)},
+            f"{agent_reply.agent_name} reply",
+            {
+                "text": mara_reply,
+                "agent": agent_reply.agent_id,
+                "agent_name": agent_reply.agent_name,
+                "agent_seconds": round(agent_reply.elapsed_seconds, 3),
+                "pipeline_agent_seconds": round(ssh_time, 3),
+            },
         )
-        self.logger.info("Mara replied: %s (SSH: %.2fs)", mara_reply, ssh_time)
+        self.logger.info(
+            "%s replied: %s (agent: %.2fs)",
+            agent_reply.agent_name,
+            mara_reply,
+            agent_reply.elapsed_seconds,
+        )
         spoken_reply = prepare_spoken_reply(mara_reply, self.spoken_reply_char_limit)
         if spoken_reply != " ".join(mara_reply.split()):
             self.logger.info(
@@ -384,100 +417,43 @@ class WavCaptureProcessor:
 
         return text
 
-    def _send_to_mara(self, text: str) -> str:
-        self.logger.info(
-            "Sending transcribed text to Mara via SSH (timeout=%s)",
-            format_timeout(self.ssh_timeout_seconds),
-        )
-        remote_command = f"{self.hermes_command} -z {shlex.quote(text)}"
-        command = [
-            "ssh",
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            f"ConnectTimeout={int(self.ssh_connect_timeout_seconds)}",
-            "-o",
-            "ServerAliveInterval=15",
-            "-o",
-            "ServerAliveCountMax=8",
-            self.ssh_target,
-            remote_command,
-        ]
-
-        start_time = time.monotonic()
-        next_status_time = self.status_interval_seconds
+    def _send_to_agent(self, text: str) -> AgentReply | None:
         try:
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+            route = consume_agent_route(
+                self.agent_route_state_path,
+                fallback_active_agent=self.active_agent,
             )
         except Exception as exc:
-            self.logger.error("SSH communication failed: %s", exc)
-            return ""
+            self.logger.error("Could not read agent route state: %s", exc)
+            return None
 
-        while True:
-            elapsed = time.monotonic() - start_time
-            if self.ssh_timeout_seconds is not None and elapsed >= self.ssh_timeout_seconds:
-                process.kill()
-                stdout, stderr = process.communicate()
-                self.logger.error(
-                    "SSH/Hermes response timed out after %.1fs. Increase --ssh-timeout or use 0 to disable it.",
-                    self.ssh_timeout_seconds,
-                )
-                if stderr.strip():
-                    self.logger.error("Mara stderr before timeout: %s", stderr.strip())
-                if stdout.strip():
-                    self.logger.warning("Mara stdout before timeout: %s", stdout.strip())
-                return ""
+        settings = AgentSettings(
+            active_agent=route.agent_id,
+            ssh_target=self.ssh_target,
+            hermes_command=self.hermes_command,
+            ssh_timeout_seconds=self.ssh_timeout_seconds,
+            ssh_connect_timeout_seconds=self.ssh_connect_timeout_seconds,
+            openclaw_base_url=self.openclaw_base_url,
+            openclaw_model=self.openclaw_model,
+            openclaw_timeout_seconds=self.openclaw_timeout_seconds,
+        )
+        if route.one_shot:
+            self.logger.info("Using one-shot agent route: %s", route.agent_id)
 
-            wait_seconds = 0.5
-            if self.ssh_timeout_seconds is not None:
-                wait_seconds = max(0.05, min(wait_seconds, self.ssh_timeout_seconds - elapsed))
-
-            try:
-                stdout, stderr = process.communicate(timeout=wait_seconds)
-                break
-            except subprocess.TimeoutExpired:
-                elapsed = time.monotonic() - start_time
-                if self.status_interval_seconds and elapsed >= next_status_time:
-                    if self.ssh_timeout_seconds is None:
-                        detail = "no SSH response timeout"
-                    else:
-                        detail = f"{max(0.0, self.ssh_timeout_seconds - elapsed):.0f}s before timeout"
-                    emit_status(
-                        self.logger,
-                        "THINKING",
-                        f"Mara is still working over SSH ({elapsed:.0f}s elapsed, {detail})",
-                    )
-                    next_status_time += self.status_interval_seconds
-                continue
-            except KeyboardInterrupt:
-                process.kill()
-                process.communicate()
-                raise
-            except Exception as exc:
-                process.kill()
-                process.communicate()
-                self.logger.error("SSH communication failed: %s", exc)
-                return ""
-
-        if process.returncode != 0:
-            self.logger.error("SSH command failed: %s", stderr.strip() or stdout.strip() or "no output")
-            return ""
-
-        reply = stdout.strip()
-        if not reply:
-            self.logger.warning("Mara returned no response.")
-            if stderr:
-                self.logger.warning("Mara stderr: %s", stderr.strip())
-            return ""
-
-        return reply
+        try:
+            return ask_agent(
+                text,
+                settings,
+                self.logger,
+                status_callback=lambda status, message, details=None: emit_status(
+                    self.logger, status, message, details
+                ),
+                status_interval_seconds=self.status_interval_seconds,
+                requests_session=self.agent_session,
+            )
+        except AgentError as exc:
+            self.logger.error("Agent request failed: %s", exc)
+            return None
 
     def _request_tts_audio(self, text: str, timeout_seconds: float | None) -> bytes | None:
         response = self.tts_session.post(
@@ -876,6 +852,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--poll-interval", type=float, default=0.5)
     parser.add_argument("--ssh-target", default=DEFAULT_SSH_TARGET)
     parser.add_argument("--hermes-command", default=DEFAULT_HERMES_COMMAND)
+    parser.add_argument("--active-agent", choices=("hermes", "openclaw"), default=DEFAULT_ACTIVE_AGENT)
+    parser.add_argument("--agent-route-state-path", default=str(DEFAULT_AGENT_ROUTE_STATE_PATH))
+    parser.add_argument("--openclaw-base-url", default=DEFAULT_OPENCLAW_BASE_URL)
+    parser.add_argument("--openclaw-model", default=DEFAULT_OPENCLAW_MODEL)
+    parser.add_argument(
+        "--openclaw-timeout",
+        type=lambda value: parse_optional_timeout(value, DEFAULT_OPENCLAW_TIMEOUT_SECONDS),
+        default=DEFAULT_OPENCLAW_TIMEOUT_SECONDS,
+        help="Seconds to wait for OpenClaw HTTP response. Use 0/none to disable it.",
+    )
     parser.add_argument("--tts-url", default=DEFAULT_TTS_URL)
     parser.add_argument(
         "--tts-stream-url",
@@ -977,10 +963,14 @@ def main() -> int:
     logger.info("TTS streaming endpoint: %s", args.tts_stream_url)
     logger.info("Mara SSH target: %s", args.ssh_target)
     logger.info("Hermes command: %s", args.hermes_command)
+    logger.info("Default agent route: %s", args.active_agent)
+    logger.info("Agent route state path: %s", args.agent_route_state_path)
+    logger.info("OpenClaw API: %s (model=%s)", redact_url(args.openclaw_base_url), args.openclaw_model)
     logger.info(
-        "Timeouts: transcribe=%s ssh=%s tts=%s connect=%s status_interval=%.1fs",
+        "Timeouts: transcribe=%s ssh=%s openclaw=%s tts=%s connect=%s status_interval=%.1fs",
         format_timeout(args.transcribe_timeout),
         format_timeout(args.ssh_timeout),
+        format_timeout(args.openclaw_timeout),
         format_timeout(args.tts_timeout),
         format_timeout(args.ssh_connect_timeout),
         args.status_interval,
@@ -991,18 +981,32 @@ def main() -> int:
     logger.info("TTS streaming: %s", "enabled" if args.tts_streaming else "disabled")
     if args.audio_device:
         logger.info("Audio device: %s", args.audio_device)
+    try:
+        update_agent_route_state(
+            Path(args.agent_route_state_path),
+            fallback_active_agent=args.active_agent,
+            active_agent=args.active_agent,
+            next_agent="",
+        )
+    except Exception as exc:
+        logger.warning("Could not initialize agent route state: %s", exc)
     emit_status(logger, "LISTENING", "Ready")
 
     processor = WavCaptureProcessor(
         capture_dir=capture_dir,
         ssh_target=args.ssh_target,
         hermes_command=args.hermes_command,
+        active_agent=args.active_agent,
+        openclaw_base_url=args.openclaw_base_url,
+        openclaw_model=args.openclaw_model,
         tts_url=args.tts_url,
         tts_stream_url=args.tts_stream_url,
         audio_device=args.audio_device,
         logger=logger,
+        agent_route_state_path=Path(args.agent_route_state_path),
         transcribe_timeout_seconds=args.transcribe_timeout,
         ssh_timeout_seconds=args.ssh_timeout,
+        openclaw_timeout_seconds=args.openclaw_timeout,
         tts_timeout_seconds=args.tts_timeout,
         tts_retry_attempts=args.tts_retry_attempts,
         status_interval_seconds=args.status_interval,

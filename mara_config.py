@@ -19,6 +19,10 @@ OPTION_SCHEMA: dict[str, dict[str, Any]] = {
     "ssh_timeout_seconds": {"type": "float", "default": 0.0, "min": 0.0, "max": 3600.0, "restart_required": True},
     "ssh_connect_timeout_seconds": {"type": "float", "default": 5.0, "min": 1.0, "max": 120.0, "restart_required": True},
     "status_interval_seconds": {"type": "float", "default": 10.0, "min": 0.0, "max": 300.0, "restart_required": True},
+    "active_agent": {"type": "str", "default": "hermes", "choices": ("hermes", "openclaw"), "restart_required": False},
+    "openclaw_base_url": {"type": "str", "default": "http://192.168.0.65:8645/v1", "restart_required": True},
+    "openclaw_model": {"type": "str", "default": "gemini 3.1 pro", "restart_required": True},
+    "openclaw_timeout_seconds": {"type": "float", "default": 600.0, "min": 0.0, "max": 3600.0, "restart_required": True},
     "audio_device": {"type": "str", "default": "", "restart_required": True},
     "tts_device": {"type": "str", "default": "auto", "restart_required": True},
     "capture_dir": {"type": "str", "default": "", "restart_required": True},
@@ -53,6 +57,8 @@ def _coerce_option(name: str, value: Any) -> Any:
         raise ValueError(f"{name} must be >= {spec['min']}")
     if "max" in spec and coerced > spec["max"]:
         raise ValueError(f"{name} must be <= {spec['max']}")
+    if "choices" in spec and coerced not in spec["choices"]:
+        raise ValueError(f"{name} must be one of: {', '.join(spec['choices'])}")
     return coerced
 
 

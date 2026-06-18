@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import logging
 import os
-import shlex
 import subprocess
 import sys
 import time
@@ -17,6 +16,16 @@ import sounddevice as sd
 import soundfile as sf
 
 from mara_events import append_event
+from mara_agents import (
+    DEFAULT_ACTIVE_AGENT,
+    DEFAULT_OPENCLAW_BASE_URL,
+    DEFAULT_OPENCLAW_MODEL,
+    DEFAULT_OPENCLAW_TIMEOUT_SECONDS,
+    AgentSettings,
+    ask_agent,
+    check_openclaw_health,
+    redact_url,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -89,6 +98,10 @@ class PipelineConfig:
     capture_dir: Path = DEFAULT_CAPTURE_DIR
     ssh_target: str = DEFAULT_SSH_TARGET
     hermes_command: str = DEFAULT_HERMES_COMMAND
+    active_agent: str = DEFAULT_ACTIVE_AGENT
+    openclaw_base_url: str = DEFAULT_OPENCLAW_BASE_URL
+    openclaw_model: str = DEFAULT_OPENCLAW_MODEL
+    openclaw_timeout_seconds: float | None = DEFAULT_OPENCLAW_TIMEOUT_SECONDS
     tts_url: str = DEFAULT_TTS_URL
     tts_health_url: str = DEFAULT_TTS_HEALTH_URL
     audio_device: str | int | None = DEFAULT_AUDIO_DEVICE
@@ -321,6 +334,27 @@ def run_diagnostics(
                 config.ssh_target,
             )
 
+    if config.active_agent == "openclaw":
+        openclaw_status = check_openclaw_health(
+            AgentSettings(
+                active_agent=config.active_agent,
+                openclaw_base_url=config.openclaw_base_url,
+                openclaw_model=config.openclaw_model,
+                openclaw_timeout_seconds=config.openclaw_timeout_seconds,
+            )
+        )
+        if openclaw_status.get("ok"):
+            logger.info("OpenClaw API looks reachable at %s", redact_url(config.openclaw_base_url))
+        else:
+            logger.warning(
+                "OpenClaw check failed for %s: %s",
+                redact_url(config.openclaw_base_url),
+                openclaw_status.get("error") or openclaw_status.get("payload") or openclaw_status,
+            )
+            logger.warning(
+                "Confirm the Dell gateway has API_SERVER_ENABLED=true, port 8645 is reachable, and MARA_OPENCLAW_API_KEY is set locally."
+            )
+
 
 def read_stable_text(
     file_path: Path,
@@ -339,7 +373,7 @@ def read_stable_text(
         return " ".join(handle.read().split())
 
 
-def ask_hermes(
+def ask_selected_agent(
     input_text: str,
     config: PipelineConfig,
     logger: logging.Logger,
@@ -348,55 +382,25 @@ def ask_hermes(
     if workflow_status:
         emit_status(logger, workflow_status, f"Prompt looks like {workflow_status.lower()}")
 
-    remote_command = f"{config.hermes_command} -z {shlex.quote(input_text)}"
-    ssh_command = [
-        "ssh",
-        "-T",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=5",
-        "-o",
-        "ServerAliveInterval=15",
-        "-o",
-        "ServerAliveCountMax=8",
-        config.ssh_target,
-        remote_command,
-    ]
-
-    logger.info(
-        "Sending %d characters to Hermes on %s (timeout=%s)",
-        len(input_text),
-        config.ssh_target,
-        format_timeout(config.ssh_timeout_seconds),
+    reply = ask_agent(
+        input_text,
+        AgentSettings(
+            active_agent=config.active_agent,
+            ssh_target=config.ssh_target,
+            hermes_command=config.hermes_command,
+            ssh_timeout_seconds=config.ssh_timeout_seconds,
+            ssh_connect_timeout_seconds=5.0,
+            openclaw_base_url=config.openclaw_base_url,
+            openclaw_model=config.openclaw_model,
+            openclaw_timeout_seconds=config.openclaw_timeout_seconds,
+        ),
+        logger,
+        status_callback=lambda status, message, details=None: emit_status(logger, status, message, details),
     )
-    start_time = time.perf_counter()
-    result = subprocess.run(
-        ssh_command,
-        capture_output=True,
-        text=True,
-        timeout=config.ssh_timeout_seconds,
-        check=False,
-    )
-    elapsed = time.perf_counter() - start_time
+    return reply.text
 
-    stdout = result.stdout.strip()
-    stderr = result.stderr.strip()
 
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"SSH/Hermes failed with exit code {result.returncode}: {stderr or stdout or 'no output'}"
-        )
-
-    if not stdout:
-        raise RuntimeError(
-            f"Hermes returned no reply. stderr={stderr or '<empty>'}"
-        )
-
-    logger.info("Hermes replied in %.2fs with %d characters", elapsed, len(stdout))
-    if stderr:
-        logger.debug("Hermes stderr: %s", stderr)
-    return stdout
+ask_hermes = ask_selected_agent
 
 
 def synthesize_speech(
@@ -480,8 +484,8 @@ def run_pipeline(
         raise ValueError("Input text is empty after normalization.")
 
     logger.info("Pipeline started for %d characters", len(normalized_text))
-    reply = ask_hermes(normalized_text, config, logger)
-    logger.info("Hermes reply: %s", reply)
+    reply = ask_selected_agent(normalized_text, config, logger)
+    logger.info("Agent reply: %s", reply)
 
     if not play_audio:
         emit_status(logger, "LISTENING", "Ready")

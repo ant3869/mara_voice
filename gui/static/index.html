@@ -89,7 +89,7 @@
     .stack { display: grid; gap: 14px; }
     .status-strip {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 10px;
     }
     .metric {
@@ -262,6 +262,16 @@
       display: grid;
       gap: 3px;
     }
+    .route-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 10px;
+      align-items: end;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-elevated);
+    }
     .wide { grid-column: 1 / -1; }
     .error-text { color: var(--bad); overflow-wrap: anywhere; }
     @media (max-width: 1040px) {
@@ -272,6 +282,7 @@
       header { align-items: flex-start; flex-direction: column; }
       main { padding: 10px; }
       .status-strip, .form-grid { grid-template-columns: 1fr; }
+      .route-row { grid-template-columns: 1fr; }
       .events .time { width: 120px; }
       .events .status { width: 96px; }
     }
@@ -299,7 +310,7 @@
         <div class="section-body stack">
           <div class="status-strip">
             <div class="metric">
-              <div class="label">Hermes State</div>
+              <div class="label">Agent State</div>
               <div class="value" id="currentStatus">UNKNOWN</div>
             </div>
             <div class="metric">
@@ -313,6 +324,10 @@
             <div class="metric">
               <div class="label">Streaming</div>
               <div class="value" id="streamStatus">Unknown</div>
+            </div>
+            <div class="metric">
+              <div class="label">Active Agent</div>
+              <div class="value" id="agentStatus">Hermes</div>
             </div>
           </div>
 
@@ -357,10 +372,22 @@
       <section>
         <div class="section-head">
           <h2>Options</h2>
-          <span class="pill warn">Restart applies changes</span>
+          <span class="pill warn">Most changes restart</span>
         </div>
         <div class="section-body">
           <form id="optionsForm">
+            <div class="route-row wide">
+              <label>Default agent route
+                <select id="active_agent" name="active_agent" title="Agent used for voice prompts unless a one-shot route is queued.">
+                  <option value="hermes">Hermes</option>
+                  <option value="openclaw">OpenClaw</option>
+                </select>
+                <span class="help">Switches new prompts without restarting the listener.</span>
+              </label>
+              <button class="secondary" id="nextOpenClaw" type="button" title="Send only the next voice prompt to OpenClaw.">Next OpenClaw</button>
+              <button class="secondary" id="clearNextAgent" type="button" title="Clear any queued one-shot route.">Clear Next</button>
+              <span class="help wide" id="routeStatus">Route status unknown.</span>
+            </div>
             <label class="check-row wide">
               <span>
                 <span>True streaming TTS</span>
@@ -408,9 +435,21 @@
                 <input id="status_interval_seconds" name="status_interval_seconds" type="number" min="0" max="300" step="0.5" required title="How often the terminal prints still-working updates.">
                 <span class="help">Example: 10 gives steady progress messages; 0 disables them.</span>
               </label>
+              <label>OpenClaw timeout seconds
+                <input id="openclaw_timeout_seconds" name="openclaw_timeout_seconds" type="number" min="0" max="3600" step="0.5" required title="How long to wait for the OpenClaw HTTP response.">
+                <span class="help">Example: 600 lets OpenClaw work for longer tasks; 0 disables the timeout.</span>
+              </label>
               <label>TTS device
                 <input id="tts_device" name="tts_device" type="text" placeholder="auto" title="Device used by VoxCPM.">
                 <span class="help">Example: auto, cpu, cuda, cuda:0.</span>
+              </label>
+              <label class="wide">OpenClaw API base URL
+                <input id="openclaw_base_url" name="openclaw_base_url" type="text" placeholder="http://192.168.0.65:8645/v1" title="OpenAI-compatible API base URL for OpenClaw.">
+                <span class="help">Example: http://192.168.0.65:8645/v1. The Dell gateway must have API_SERVER_ENABLED=true.</span>
+              </label>
+              <label class="wide">OpenClaw model
+                <input id="openclaw_model" name="openclaw_model" type="text" placeholder="gemini 3.1 pro" title="Model id sent in the OpenAI-compatible request.">
+                <span class="help">Example: gemini 3.1 pro. Change this only if the OpenClaw API reports a different model id.</span>
               </label>
               <label class="wide">Audio output device
                 <select id="audio_device" name="audio_device" title="Where Mara's voice plays."></select>
@@ -461,6 +500,7 @@
       "tts_streaming", "regenerate_voice_reference", "spoken_reply_char_limit",
       "tts_chunk_char_limit", "tts_stream_chunk_char_limit", "tts_inference_timesteps", "tts_timeout_seconds",
       "ssh_timeout_seconds", "ssh_connect_timeout_seconds", "status_interval_seconds",
+      "active_agent", "openclaw_base_url", "openclaw_model", "openclaw_timeout_seconds",
       "audio_device", "tts_device", "capture_dir", "hermes_command",
       "voice_reference_path", "voice_reference_text"
     ];
@@ -506,6 +546,7 @@
       el("updated").textContent = fmtTime(state.last_updated);
       el("eventCount").textContent = `${state.event_count || 0} events`;
       el("subtitle").textContent = state.event_log_path || "";
+      renderRoute(state.agent_route || {});
       const hasError = Boolean(state.last_error);
       el("errorPanel").hidden = !hasError;
       el("lastError").textContent = state.last_error || "";
@@ -573,6 +614,7 @@
       const options = payload.options || {};
       for (const id of ids) setField(id, options[id]);
       renderAudioDevices(payload.audio_devices || [], options.audio_device);
+      renderRoute(payload.agent_route || {});
       return payload;
     }
 
@@ -592,12 +634,39 @@
         if (!response.ok) throw new Error(payload.detail || `save ${response.status}`);
         for (const id of ids) setField(id, payload.options[id]);
         renderAudioDevices(payload.audio_devices || [], payload.options.audio_device);
-        el("saveStatus").textContent = "Saved. Restart Mara to apply.";
+        renderRoute(payload.agent_route || {});
+        el("saveStatus").textContent = "Saved. Route applies live; restart applies listener/server settings.";
       } catch (error) {
         el("saveStatus").textContent = error.message;
       } finally {
         el("saveOptions").disabled = false;
       }
+    }
+
+    function agentLabel(agent) {
+      return agent === "openclaw" ? "OpenClaw" : "Hermes";
+    }
+
+    function renderRoute(route) {
+      const active = route.active_agent || el("active_agent")?.value || "hermes";
+      const next = route.next_agent || "";
+      if (el("active_agent")) el("active_agent").value = active;
+      el("agentStatus").textContent = next ? `${agentLabel(active)} (next ${agentLabel(next)})` : agentLabel(active);
+      const keyStatus = route.openclaw_key_configured ? "OpenClaw key configured" : "OpenClaw key missing";
+      const nextText = next ? ` Next prompt: ${agentLabel(next)}.` : "";
+      el("routeStatus").textContent = `Default: ${agentLabel(active)}.${nextText} ${keyStatus}.`;
+    }
+
+    async function saveRoute(update) {
+      const response = await fetch("/api/route", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(update)
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `route ${response.status}`);
+      renderRoute(payload);
+      return payload;
     }
 
     async function refreshAll() {
@@ -614,6 +683,21 @@
       el("saveStatus").textContent = error.message;
     }));
     el("optionsForm").addEventListener("submit", saveOptions);
+    el("active_agent").addEventListener("change", () => {
+      saveRoute({ active_agent: fieldValue("active_agent") })
+        .then(() => { el("saveStatus").textContent = "Agent route updated."; })
+        .catch((error) => { el("saveStatus").textContent = error.message; });
+    });
+    el("nextOpenClaw").addEventListener("click", () => {
+      saveRoute({ next_agent: "openclaw" })
+        .then(() => { el("saveStatus").textContent = "Next prompt will use OpenClaw."; })
+        .catch((error) => { el("saveStatus").textContent = error.message; });
+    });
+    el("clearNextAgent").addEventListener("click", () => {
+      saveRoute({ next_agent: "" })
+        .then(() => { el("saveStatus").textContent = "Next prompt route cleared."; })
+        .catch((error) => { el("saveStatus").textContent = error.message; });
+    });
 
     loadOptions().catch((error) => {
       el("saveStatus").textContent = error.message;
