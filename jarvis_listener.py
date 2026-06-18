@@ -4,6 +4,7 @@ import argparse
 import io
 import os
 import time
+from datetime import datetime
 from queue import Empty, Queue
 from pathlib import Path
 from threading import Thread
@@ -24,7 +25,7 @@ from mara_agents import (
     ask_agent,
     redact_url,
 )
-from mara_events import append_event
+from mara_events import append_event, read_recent_events
 from mara_pipeline import (
     DEFAULT_CAPTURE_DIR,
     DEFAULT_HERMES_COMMAND,
@@ -65,6 +66,7 @@ DEFAULT_TTS_STREAMING = os.getenv("MARA_TTS_STREAMING", "0") == "1"
 DEFAULT_TTS_STREAM_URL = os.getenv("MARA_TTS_STREAM_URL", "http://127.0.0.1:8000/tts/stream")
 DEFAULT_TTS_STREAM_CHUNK_CHAR_LIMIT = int(os.getenv("MARA_TTS_STREAM_CHUNK_CHAR_LIMIT", "180"))
 DEFAULT_TTS_STREAM_PREBUFFER_SECONDS = float(os.getenv("MARA_TTS_STREAM_PREBUFFER_SECONDS", "8"))
+DEFAULT_PROCESS_EXISTING_SECONDS = float(os.getenv("MARA_PROCESS_EXISTING_SECONDS", "600"))
 
 
 def parse_optional_timeout(value: str | None, default: float | None) -> float | None:
@@ -139,6 +141,43 @@ def split_text_for_tts(text: str, max_chars: int) -> list[str]:
         remaining = remaining[cutoff:].strip()
 
     return chunks
+
+
+def find_existing_capture_files(
+    capture_dir: Path,
+    max_age_seconds: float,
+    now_seconds: float | None = None,
+    newer_than_seconds: float | None = None,
+) -> list[Path]:
+    if max_age_seconds <= 0:
+        return []
+
+    now = time.time() if now_seconds is None else now_seconds
+    cutoff = now - max_age_seconds
+    if newer_than_seconds is not None:
+        cutoff = max(cutoff, newer_than_seconds)
+    captures: list[tuple[float, Path]] = []
+    for file_path in capture_dir.glob("*.wav"):
+        try:
+            modified = file_path.stat().st_mtime
+        except OSError:
+            continue
+        if modified >= cutoff:
+            captures.append((modified, file_path))
+
+    return [file_path for _modified, file_path in sorted(captures)]
+
+
+def latest_event_timestamp_seconds() -> float | None:
+    for event in reversed(read_recent_events(limit=200)):
+        timestamp = event.get("timestamp")
+        if not isinstance(timestamp, str) or not timestamp:
+            continue
+        try:
+            return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            continue
+    return None
 
 
 DEFAULT_SSH_TIMEOUT_SECONDS = parse_optional_timeout(os.getenv("MARA_SSH_TIMEOUT"), None)
@@ -967,6 +1006,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TTS_STREAM_PREBUFFER_SECONDS,
         help="Seconds of streaming audio to buffer before playback to avoid static/choppy underruns.",
     )
+    parser.add_argument(
+        "--process-existing-seconds",
+        type=float,
+        default=DEFAULT_PROCESS_EXISTING_SECONDS,
+        help="On startup, process existing Voicebox WAV files modified within this many seconds. Use 0 to disable.",
+    )
     streaming_group = parser.add_mutually_exclusive_group()
     streaming_group.add_argument(
         "--tts-streaming",
@@ -1025,6 +1070,7 @@ def main() -> int:
     logger.info("TTS streaming chunk character limit: %s", args.tts_stream_chunk_char_limit)
     logger.info("TTS streaming prebuffer: %.2fs", args.tts_stream_prebuffer_seconds)
     logger.info("TTS streaming: %s", "enabled" if args.tts_streaming else "disabled")
+    logger.info("Process existing captures window: %.1fs", args.process_existing_seconds)
     if args.audio_device:
         logger.info("Audio device: %s", args.audio_device)
     try:
@@ -1036,6 +1082,7 @@ def main() -> int:
         )
     except Exception as exc:
         logger.warning("Could not initialize agent route state: %s", exc)
+    startup_backlog_newer_than = latest_event_timestamp_seconds()
     emit_status(logger, "LISTENING", "Ready")
 
     processor = WavCaptureProcessor(
@@ -1063,6 +1110,25 @@ def main() -> int:
         tts_stream_chunk_char_limit=args.tts_stream_chunk_char_limit,
         tts_stream_prebuffer_seconds=args.tts_stream_prebuffer_seconds,
     )
+
+    existing_captures = find_existing_capture_files(
+        capture_dir,
+        args.process_existing_seconds,
+        newer_than_seconds=startup_backlog_newer_than,
+    )
+    if existing_captures:
+        logger.info(
+            "Processing %d existing recent Voicebox capture(s) from startup backlog",
+            len(existing_captures),
+        )
+        emit_status(
+            logger,
+            "THINKING",
+            f"Processing {len(existing_captures)} recent capture(s) from downtime",
+        )
+        for file_path in existing_captures:
+            processor.process_path(file_path)
+        emit_status(logger, "LISTENING", "Ready")
 
     if WATCHDOG_AVAILABLE and not args.force_polling:
         observer = Observer()
