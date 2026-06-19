@@ -65,6 +65,7 @@ class AgentRoutingTests(unittest.TestCase):
                 openclaw_base_url="http://192.168.0.65:8645/v1",
                 openclaw_model="gemini 3.1 pro",
                 openclaw_api_key="test-key",
+                openclaw_system_prompt="You are Mara.",
                 agent_session_id="voice-session",
                 agent_session_history_path=Path(tmp_dir) / "sessions.json",
             )
@@ -77,6 +78,7 @@ class AgentRoutingTests(unittest.TestCase):
         self.assertEqual(
             second_payload["messages"],
             [
+                {"role": "system", "content": "You are Mara."},
                 {"role": "user", "content": "first question"},
                 {"role": "assistant", "content": "first reply"},
                 {"role": "user", "content": "second question"},

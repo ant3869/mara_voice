@@ -71,6 +71,24 @@ The dashboard shows live pipeline state: agent route, TTS server health (device,
 - OpenClaw is the alternate route (OpenAI-compatible HTTP).
 - Switch routes from the GUI or with `MARA_ACTIVE_AGENT=openclaw`.
 - Persistent sessions are on by default for every prompt. Hermes uses session ID `voice-session-hermes`, OpenClaw uses `voice-session-openclaw`. History is stored in `config/mara_agent_sessions.json` (ignored by git). Change IDs with `MARA_HERMES_SESSION_ID` / `MARA_OPENCLAW_SESSION_ID` or the GUI fields.
+- **History TTL.** Replayed turns older than `MARA_AGENT_SESSION_HISTORY_TTL_SECONDS` (default 900 s / 15 min) are dropped on load, so finished tasks and stale context stop resurfacing in later prompts. Set to `0`/`none` to disable the age filter (the `MARA_AGENT_SESSION_HISTORY_MESSAGES` count cap still applies).
+
+### Identity & personas
+
+Each agent gets a system prompt that anchors its identity (Hermes = **Mara**, OpenClaw = **Claw**), forbids it from claiming to be the other, and enforces brief, audio-clean replies (no markdown, code blocks, symbols, URLs, or file paths). This stops the underlying model — or a remote gateway with its own system prompt — from drifting into the wrong persona.
+
+- **Persona prompts** resolve as: `MARA_HERMES_SYSTEM_PROMPT` / `MARA_OPENCLAW_SYSTEM_PROMPT` env vars → `config/mara_personas.json` (`MARA_PERSONA_CONFIG_PATH`) → built-in defaults. Edit the JSON file to tune wording without touching code.
+- **Output guardrail** (`MARA_AGENT_GUARDRAIL=1`, on by default) scans every reply: blatant first-person self-misidentification (e.g. Claw saying "I am Mara") is auto-corrected, and fabricated cross-agent relay claims ("I pinged her and she got it") are flagged in the logs.
+
+### Idle heartbeat
+
+When enabled, the active agent can speak up on its own. While the pipeline is idle, Mara periodically asks it for a check-in and only speaks the result if there is something real to report (otherwise the agent replies with the sentinel word and stays silent). Off by default.
+
+- `MARA_HEARTBEAT_ENABLED=1` turns it on.
+- `MARA_HEARTBEAT_INTERVAL_SECONDS` (default 1800) — minimum seconds between check-ins.
+- `MARA_HEARTBEAT_IDLE_SECONDS` (default 300) — required idle time before a check-in fires.
+- `MARA_HEARTBEAT_QUIET_HOURS` — optional `START-END` 24 h window (e.g. `23-7`) to stay silent.
+- `MARA_HEARTBEAT_SENTINEL` (default `NOTHING`) / `MARA_HEARTBEAT_PROMPT` — the "nothing to report" word and the prompt override.
 
 ### Voice profiles
 

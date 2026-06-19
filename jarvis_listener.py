@@ -106,6 +106,19 @@ DEFAULT_ASYNC_FOLLOWUP_ENABLED = os.getenv("MARA_ASYNC_FOLLOWUP_ENABLED", "1") =
 DEFAULT_ASYNC_FOLLOWUP_INITIAL_DELAY_SECONDS = float(os.getenv("MARA_ASYNC_FOLLOWUP_INITIAL_DELAY_SECONDS", "3"))
 DEFAULT_ASYNC_FOLLOWUP_POLL_SECONDS = float(os.getenv("MARA_ASYNC_FOLLOWUP_POLL_SECONDS", "8"))
 DEFAULT_ASYNC_FOLLOWUP_MAX_ATTEMPTS = int(os.getenv("MARA_ASYNC_FOLLOWUP_MAX_ATTEMPTS", "60"))
+# Idle heartbeat: when enabled, the active agent is periodically asked for an unprompted
+# check-in and speaks the result on its own. Default off so it never surprises the user.
+DEFAULT_HEARTBEAT_ENABLED = os.getenv("MARA_HEARTBEAT_ENABLED", "0") == "1"
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = float(os.getenv("MARA_HEARTBEAT_INTERVAL_SECONDS", "1800"))
+DEFAULT_HEARTBEAT_IDLE_SECONDS = float(os.getenv("MARA_HEARTBEAT_IDLE_SECONDS", "300"))
+DEFAULT_HEARTBEAT_SENTINEL = os.getenv("MARA_HEARTBEAT_SENTINEL", "NOTHING")
+DEFAULT_HEARTBEAT_PROMPT = os.getenv(
+    "MARA_HEARTBEAT_PROMPT",
+    "Automatic check-in, not from Ant. If a background task just finished or you have "
+    "something important to tell Ant, say it in ONE short spoken sentence. If there is "
+    f"nothing new to report, reply with exactly {DEFAULT_HEARTBEAT_SENTINEL} and nothing else.",
+)
+DEFAULT_HEARTBEAT_QUIET_HOURS = os.getenv("MARA_HEARTBEAT_QUIET_HOURS", "")
 DEFAULT_VOICE_INBOX_PATH = Path(
     os.getenv("MARA_VOICE_INBOX_PATH", str(BASE_DIR / "config" / "mara_voice_inbox.jsonl"))
 )
@@ -310,6 +323,12 @@ class WavCaptureProcessor:
         async_followup_initial_delay_seconds: float = DEFAULT_ASYNC_FOLLOWUP_INITIAL_DELAY_SECONDS,
         async_followup_poll_seconds: float = DEFAULT_ASYNC_FOLLOWUP_POLL_SECONDS,
         async_followup_max_attempts: int = DEFAULT_ASYNC_FOLLOWUP_MAX_ATTEMPTS,
+        heartbeat_enabled: bool = DEFAULT_HEARTBEAT_ENABLED,
+        heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+        heartbeat_idle_seconds: float = DEFAULT_HEARTBEAT_IDLE_SECONDS,
+        heartbeat_prompt: str = DEFAULT_HEARTBEAT_PROMPT,
+        heartbeat_sentinel: str = DEFAULT_HEARTBEAT_SENTINEL,
+        heartbeat_quiet_hours: str = DEFAULT_HEARTBEAT_QUIET_HOURS,
         agent_session_id: str = DEFAULT_AGENT_SESSION_ID,
         hermes_session_id: str = DEFAULT_HERMES_SESSION_ID,
         openclaw_session_id: str = DEFAULT_OPENCLAW_SESSION_ID,
@@ -352,6 +371,12 @@ class WavCaptureProcessor:
         self.async_followup_initial_delay_seconds = max(0.0, async_followup_initial_delay_seconds)
         self.async_followup_poll_seconds = max(1.0, async_followup_poll_seconds)
         self.async_followup_max_attempts = max(0, int(async_followup_max_attempts))
+        self.heartbeat_enabled = bool(heartbeat_enabled)
+        self.heartbeat_interval_seconds = max(0.0, heartbeat_interval_seconds)
+        self.heartbeat_idle_seconds = max(0.0, heartbeat_idle_seconds)
+        self.heartbeat_prompt = " ".join(str(heartbeat_prompt or "").split())
+        self.heartbeat_sentinel = " ".join(str(heartbeat_sentinel or "NOTHING").split()) or "NOTHING"
+        self._heartbeat_quiet_hours = self._parse_quiet_hours(heartbeat_quiet_hours)
         self.agent_session_id = agent_session_id
         self.hermes_session_id = hermes_session_id
         self.openclaw_session_id = openclaw_session_id
@@ -365,6 +390,131 @@ class WavCaptureProcessor:
         self.recent_files: dict[Path, float] = {}
         self.processed_files: dict[Path, float] = {}
         self.processed_file_retention_seconds = 24 * 60 * 60
+        # Idle tracking for the heartbeat: a turn is "in flight" from the moment a
+        # capture starts processing until any async worker/follow-up for it finishes.
+        self._activity_lock = Lock()
+        self._inflight = 0
+        self._last_activity_monotonic = time.monotonic()
+        self._heartbeat_stop = Event()
+        self._heartbeat_thread: Thread | None = None
+        self._heartbeat_last_run_monotonic = 0.0
+
+    @staticmethod
+    def _parse_quiet_hours(raw: str) -> tuple[int, int] | None:
+        text = str(raw or "").strip()
+        if not text or "-" not in text:
+            return None
+        start_text, _, end_text = text.partition("-")
+        try:
+            start = int(start_text) % 24
+            end = int(end_text) % 24
+        except ValueError:
+            return None
+        if start == end:
+            return None
+        return start, end
+
+    def _begin_activity(self) -> None:
+        with self._activity_lock:
+            self._inflight += 1
+            self._last_activity_monotonic = time.monotonic()
+
+    def _end_activity(self) -> None:
+        with self._activity_lock:
+            self._inflight = max(0, self._inflight - 1)
+            self._last_activity_monotonic = time.monotonic()
+
+    def _is_idle(self, min_idle_seconds: float) -> bool:
+        with self._activity_lock:
+            if self._inflight > 0:
+                return False
+            return (time.monotonic() - self._last_activity_monotonic) >= min_idle_seconds
+
+    def _in_quiet_hours(self) -> bool:
+        if not self._heartbeat_quiet_hours:
+            return False
+        start, end = self._heartbeat_quiet_hours
+        hour = time.localtime().tm_hour
+        if start < end:
+            return start <= hour < end
+        return hour >= start or hour < end
+
+    def _is_heartbeat_noop(self, text: str) -> bool:
+        normalized = " ".join(text.split()).strip().rstrip(".!").upper()
+        if not normalized or normalized == self.heartbeat_sentinel.upper():
+            return True
+        return is_pending_followup_reply(text)
+
+    def start_heartbeat(self) -> None:
+        if not self.heartbeat_enabled or self.heartbeat_interval_seconds <= 0:
+            return
+        if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
+            return
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = Thread(target=self._heartbeat_loop, daemon=True)
+        self._heartbeat_thread.start()
+        self.logger.info(
+            "Heartbeat enabled: checking in every %.0fs when idle >= %.0fs",
+            self.heartbeat_interval_seconds,
+            self.heartbeat_idle_seconds,
+        )
+
+    def stop_heartbeat(self) -> None:
+        self._heartbeat_stop.set()
+
+    def _heartbeat_loop(self) -> None:
+        check_seconds = max(5.0, min(self.heartbeat_interval_seconds, 30.0))
+        while not self._heartbeat_stop.wait(check_seconds):
+            try:
+                self._heartbeat_tick()
+            except Exception as exc:  # never let the heartbeat thread die
+                self.logger.warning("Heartbeat tick failed: %s", exc)
+
+    def _heartbeat_tick(self) -> None:
+        now = time.monotonic()
+        if now - self._heartbeat_last_run_monotonic < self.heartbeat_interval_seconds:
+            return
+        if self._in_quiet_hours():
+            return
+        if not self._is_idle(self.heartbeat_idle_seconds):
+            return
+        settings = self._agent_settings_for_next_route()
+        if settings is None:
+            return
+        if not self.heartbeat_prompt:
+            return
+
+        self._heartbeat_last_run_monotonic = now
+        # Run the check-in under a throwaway, non-persisted session so the meta-prompt
+        # never leaks into (or is remembered by) the real conversation history.
+        hb_settings = replace(
+            settings,
+            agent_session_persistence=False,
+            agent_session_id=(settings.agent_session_id or DEFAULT_AGENT_SESSION_ID) + "-heartbeat",
+            hermes_session_id="",
+            openclaw_session_id="",
+        )
+        self._begin_activity()
+        session = requests.Session()
+        try:
+            reply = self._request_agent_reply(self.heartbeat_prompt, hb_settings, requests_session=session)
+        finally:
+            session.close()
+            self._end_activity()
+
+        if reply is None:
+            return
+        if self._is_heartbeat_noop(reply.text):
+            self.logger.info("Heartbeat: %s had nothing to report", reply.agent_name)
+            return
+        self.logger.info("Heartbeat: %s has an unprompted update", reply.agent_name)
+        self._handle_agent_reply(
+            reply,
+            pipeline_start=None,
+            pipeline_agent_seconds=None,
+            source="heartbeat",
+            terminal_label="[Mara/heartbeat]",
+        )
 
     def process_path(self, file_path: Path) -> None:
         if file_path.suffix.lower() != ".wav":
@@ -576,6 +726,8 @@ class WavCaptureProcessor:
             event_message = f"{agent_reply.agent_name} async follow-up"
         elif source == "voice_inbox":
             event_message = "Voice inbox reply"
+        elif source == "heartbeat":
+            event_message = f"{agent_reply.agent_name} check-in"
 
         self._append_event("conversation", "MARA", event_message, details)
         self.logger.info(
@@ -808,34 +960,42 @@ class WavCaptureProcessor:
         pipeline_start: float,
         reply_started: Event | None = None,
     ) -> None:
-        request_start = time.monotonic()
-        session = requests.Session()
         try:
-            agent_reply = self._request_agent_reply(text, settings, requests_session=session)
-        finally:
-            session.close()
-        agent_time = time.monotonic() - request_start
-        # Tell the acknowledgement path the real answer is in, so a fast reply can
-        # skip the ack entirely instead of speaking ack + answer.
-        if reply_started is not None:
-            reply_started.set()
-        if agent_reply is None:
-            emit_status(self.logger, "LISTENING", "Waiting for next capture")
-            return
+            request_start = time.monotonic()
+            session = requests.Session()
+            try:
+                agent_reply = self._request_agent_reply(text, settings, requests_session=session)
+            finally:
+                session.close()
+            agent_time = time.monotonic() - request_start
+            # Tell the acknowledgement path the real answer is in, so a fast reply can
+            # skip the ack entirely instead of speaking ack + answer.
+            if reply_started is not None:
+                reply_started.set()
+            if agent_reply is None:
+                emit_status(self.logger, "LISTENING", "Waiting for next capture")
+                return
 
-        self._handle_agent_reply(
-            agent_reply,
-            pipeline_start=pipeline_start,
-            pipeline_agent_seconds=agent_time,
-            source="async",
-        )
-        # Only poll for a later result if the reply actually says work is still
-        # running. is_pending_followup_reply also requires the reply to be short and
-        # free of completion words, so a complete answer that merely *mentions*
-        # sub-agents (e.g. "I spun up two sub-agents and they found ...") is not
-        # mistaken for a deferral and does not trigger a redundant second answer.
-        if is_pending_followup_reply(agent_reply.text):
-            self._poll_async_followup(text, settings, pipeline_start)
+            self._handle_agent_reply(
+                agent_reply,
+                pipeline_start=pipeline_start,
+                pipeline_agent_seconds=agent_time,
+                source="async",
+            )
+            # Only poll for a later result if the reply actually says work is still
+            # running. is_pending_followup_reply also requires the reply to be short and
+            # free of completion words, so a complete answer that merely *mentions*
+            # sub-agents (e.g. "I spun up two sub-agents and they found ...") is not
+            # mistaken for a deferral and does not trigger a redundant second answer.
+            if is_pending_followup_reply(agent_reply.text):
+                self._poll_async_followup(text, settings, pipeline_start)
+        finally:
+            # Release the in-flight marker taken in _start_async_agent_reply, including
+            # any follow-up polling above, so the idle heartbeat only fires when truly idle.
+            self._end_activity()
+            # Ensure a stuck/ack-only reply never leaves the ack path waiting.
+            if reply_started is not None:
+                reply_started.set()
 
     def _start_async_agent_reply(
         self,
@@ -850,6 +1010,9 @@ class WavCaptureProcessor:
             return None
 
         reply_started = Event()
+        # Mark the turn in flight synchronously so the heartbeat can't slip in during
+        # the brief gap before the worker thread starts; the worker releases it.
+        self._begin_activity()
         thread = Thread(
             target=self._complete_async_agent_reply,
             args=(text, settings, pipeline_start, reply_started),
@@ -911,6 +1074,13 @@ class WavCaptureProcessor:
         return True
 
     def _process_wav(self, wav_path: Path) -> None:
+        self._begin_activity()
+        try:
+            self._process_wav_impl(wav_path)
+        finally:
+            self._end_activity()
+
+    def _process_wav_impl(self, wav_path: Path) -> None:
         pipeline_start = time.monotonic()
         self.logger.info("Processing audio capture: %s", wav_path.name)
         emit_status(self.logger, "THINKING", f"Processing {wav_path.name}")
@@ -1969,6 +2139,8 @@ def main() -> int:
             offset_path=voice_inbox_path.with_name(f"{voice_inbox_path.name}.offset"),
         ).start()
 
+    processor.start_heartbeat()
+
     if WATCHDOG_AVAILABLE and not args.force_polling:
         observer = Observer()
         observer.schedule(VoiceboxEventHandler(processor, logger), str(capture_dir), recursive=False)
@@ -1980,6 +2152,7 @@ def main() -> int:
                 time.sleep(1.0)
         except KeyboardInterrupt:
             logger.info("Stopping Voicebox listener")
+            processor.stop_heartbeat()
             observer.stop()
         observer.join()
         return 0
@@ -2003,6 +2176,7 @@ def main() -> int:
         ).run_forever()
     except KeyboardInterrupt:
         logger.info("Stopping Voicebox listener")
+        processor.stop_heartbeat()
         return 0
 
     return 0

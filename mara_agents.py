@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from queue import Empty, Queue
 import shlex
@@ -29,6 +30,69 @@ DEFAULT_ACTIVE_AGENT = os.getenv("MARA_ACTIVE_AGENT", AGENT_HERMES)
 DEFAULT_OPENCLAW_BASE_URL = os.getenv("MARA_OPENCLAW_BASE_URL", "http://192.168.0.65:8645/v1")
 DEFAULT_OPENCLAW_MODEL = os.getenv("MARA_OPENCLAW_MODEL", "gemini 3.1 pro")
 DEFAULT_OPENCLAW_API_KEY_ENV = "MARA_OPENCLAW_API_KEY"
+# Shared spoken-audio style guidance appended to every persona. Replies are read aloud
+# by TTS, so they must stay short and free of anything that sounds wrong when spoken.
+_AUDIO_STYLE_GUIDANCE = (
+    " Keep replies brief and conversational: say more with fewer words, usually one to three "
+    "short sentences. Your reply is read aloud by a text-to-speech voice, so write only plain "
+    "spoken words: no markdown, code blocks, bullet lists, headings, emoji, symbols, URLs, or "
+    "file paths. Spell out anything technical the way you would naturally say it out loud."
+)
+
+# Built-in persona prompts. These anchor each agent's identity so the underlying
+# model (or a remote gateway with its own system prompt) cannot drift into claiming
+# to be the other assistant. Precedence at load time:
+#   MARA_<AGENT>_SYSTEM_PROMPT env var > config/mara_personas.json > built-in below.
+_BUILTIN_OPENCLAW_SYSTEM_PROMPT = (
+    "You are Claw, the user's voice assistant, talking to Ant. "
+    "Always speak and refer to yourself as Claw. "
+    "You are NOT Mara and you are NOT Hermes: Mara (run by the Hermes agent) is a completely "
+    "separate assistant, not you and not the software running you. Never claim to be Mara or Hermes. "
+    "Do not describe yourself as 'the software running in the background.' "
+    "You cannot message Mara directly; never pretend to relay messages to or from her. "
+    "Answer only the user's latest request and do not bring up old, already-finished tasks unless asked."
+    + _AUDIO_STYLE_GUIDANCE
+)
+_BUILTIN_HERMES_SYSTEM_PROMPT = (
+    "You are Mara, the user's voice assistant, talking to Ant. "
+    "Always speak and refer to yourself as Mara. "
+    "You are NOT Claw and you are NOT OpenClaw: Claw is a completely separate assistant, not you. "
+    "Never claim to be Claw. "
+    "You cannot message Claw directly; never pretend to relay messages to or from him. "
+    "Answer only the user's latest request and do not bring up old, already-finished tasks unless asked."
+    + _AUDIO_STYLE_GUIDANCE
+)
+DEFAULT_PERSONA_CONFIG_PATH = Path(
+    os.getenv("MARA_PERSONA_CONFIG_PATH") or str(BASE_DIR / "config" / "mara_personas.json")
+)
+
+
+def _load_persona_file() -> dict[str, str]:
+    path = DEFAULT_PERSONA_CONFIG_PATH
+    try:
+        if not path.exists():
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v) for k, v in data.items() if isinstance(v, str)}
+
+
+def load_persona_prompt(agent_id: str, builtin: str) -> str:
+    """Resolve an agent's identity prompt: env override, then persona file, then built-in."""
+    env_value = os.getenv(f"MARA_{agent_id.upper()}_SYSTEM_PROMPT")
+    if env_value is not None:
+        return env_value
+    file_value = _load_persona_file().get(agent_id)
+    if file_value and file_value.strip():
+        return file_value
+    return builtin
+
+
+DEFAULT_OPENCLAW_SYSTEM_PROMPT = load_persona_prompt(AGENT_OPENCLAW, _BUILTIN_OPENCLAW_SYSTEM_PROMPT)
+DEFAULT_HERMES_SYSTEM_PROMPT = load_persona_prompt(AGENT_HERMES, _BUILTIN_HERMES_SYSTEM_PROMPT)
 DEFAULT_AGENT_SESSION_ID = os.getenv("MARA_AGENT_SESSION_ID", "voice-session")
 DEFAULT_HERMES_SESSION_ID = os.getenv("MARA_HERMES_SESSION_ID", "")
 DEFAULT_OPENCLAW_SESSION_ID = os.getenv("MARA_OPENCLAW_SESSION_ID", "")
@@ -62,6 +126,14 @@ def _parse_optional_timeout(value: str | None, default: float | None) -> float |
 
 DEFAULT_OPENCLAW_TIMEOUT_SECONDS = _parse_optional_timeout(os.getenv("MARA_OPENCLAW_TIMEOUT"), 600.0)
 DEFAULT_AGENT_SESSION_PERSISTENCE = _parse_bool(os.getenv("MARA_AGENT_SESSION_PERSISTENCE"), True)
+# Drop replayed history older than this so finished tasks and stale identity slips
+# stop resurfacing turns later. None/0 disables the age filter (count cap still applies).
+DEFAULT_AGENT_SESSION_HISTORY_TTL_SECONDS = _parse_optional_timeout(
+    os.getenv("MARA_AGENT_SESSION_HISTORY_TTL_SECONDS"), 900.0
+)
+# Post-reply identity/fabrication guard. Corrects blatant self-misidentification and
+# flags fabricated cross-agent relay claims.
+DEFAULT_AGENT_GUARDRAIL_ENABLED = _parse_bool(os.getenv("MARA_AGENT_GUARDRAIL"), True)
 
 
 class AgentError(RuntimeError):
@@ -82,12 +154,16 @@ class AgentSettings:
     openclaw_model: str = DEFAULT_OPENCLAW_MODEL
     openclaw_timeout_seconds: float | None = DEFAULT_OPENCLAW_TIMEOUT_SECONDS
     openclaw_api_key: str = ""
+    openclaw_system_prompt: str = DEFAULT_OPENCLAW_SYSTEM_PROMPT
+    hermes_system_prompt: str = DEFAULT_HERMES_SYSTEM_PROMPT
     agent_session_id: str = DEFAULT_AGENT_SESSION_ID
     hermes_session_id: str = DEFAULT_HERMES_SESSION_ID
     openclaw_session_id: str = DEFAULT_OPENCLAW_SESSION_ID
     agent_session_history_path: Path = DEFAULT_AGENT_SESSION_HISTORY_PATH
     agent_session_history_messages: int = DEFAULT_AGENT_SESSION_HISTORY_MESSAGES
+    agent_session_history_ttl_seconds: float | None = DEFAULT_AGENT_SESSION_HISTORY_TTL_SECONDS
     agent_session_persistence: bool = DEFAULT_AGENT_SESSION_PERSISTENCE
+    agent_guardrail_enabled: bool = DEFAULT_AGENT_GUARDRAIL_ENABLED
 
 
 @dataclass(slots=True)
@@ -175,10 +251,11 @@ def _load_session_payload(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _coerce_history_messages(raw_messages: object) -> list[dict[str, str]]:
+def _coerce_history_messages(raw_messages: object) -> list[dict[str, Any]]:
+    """Parse stored turns, preserving an optional ``ts`` (epoch seconds) for TTL filtering."""
     if not isinstance(raw_messages, list):
         return []
-    messages: list[dict[str, str]] = []
+    messages: list[dict[str, Any]] = []
     for item in raw_messages:
         if not isinstance(item, dict):
             continue
@@ -186,8 +263,27 @@ def _coerce_history_messages(raw_messages: object) -> list[dict[str, str]]:
         content = str(item.get("content") or "").strip()
         if role not in ("user", "assistant") or not content:
             continue
-        messages.append({"role": role, "content": _trim_session_content(content)})
+        entry: dict[str, Any] = {"role": role, "content": _trim_session_content(content)}
+        ts = item.get("ts")
+        if isinstance(ts, (int, float)):
+            entry["ts"] = float(ts)
+        messages.append(entry)
     return messages
+
+
+def _filter_expired_messages(
+    messages: list[dict[str, Any]], ttl_seconds: float | None
+) -> list[dict[str, Any]]:
+    if not ttl_seconds or ttl_seconds <= 0:
+        return messages
+    cutoff = time.time() - ttl_seconds
+    # Turns without a stored timestamp are treated as fresh (kept) for backwards
+    # compatibility; only turns we know are older than the TTL are dropped.
+    return [m for m in messages if float(m.get("ts", cutoff)) >= cutoff]
+
+
+def _strip_history_metadata(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [{"role": m["role"], "content": m["content"]} for m in messages]
 
 
 def load_session_messages(settings: AgentSettings, agent_id: str) -> list[dict[str, str]]:
@@ -210,7 +306,8 @@ def load_session_messages(settings: AgentSettings, agent_id: str) -> list[dict[s
     limit = _session_message_limit(settings)
     if limit <= 0:
         return []
-    return messages[-limit:]
+    messages = _filter_expired_messages(messages, settings.agent_session_history_ttl_seconds)
+    return _strip_history_metadata(messages[-limit:])
 
 
 def record_session_turn(settings: AgentSettings, agent_id: str, user_text: str, assistant_text: str) -> None:
@@ -233,10 +330,11 @@ def record_session_turn(settings: AgentSettings, agent_id: str, user_text: str, 
             session = {}
             sessions[session_id] = session
         messages = _coerce_history_messages(session.get(normalized_agent))
+        now = time.time()
         messages.extend(
             [
-                {"role": "user", "content": _trim_session_content(user_text)},
-                {"role": "assistant", "content": _trim_session_content(assistant_text)},
+                {"role": "user", "content": _trim_session_content(user_text), "ts": now},
+                {"role": "assistant", "content": _trim_session_content(assistant_text), "ts": now},
             ]
         )
         session[normalized_agent] = messages[-limit:]
@@ -248,20 +346,34 @@ def record_session_turn(settings: AgentSettings, agent_id: str, user_text: str, 
 
 def _openclaw_messages(input_text: str, settings: AgentSettings) -> list[dict[str, str]]:
     history = load_session_messages(settings, AGENT_OPENCLAW)
-    return [*history, {"role": "user", "content": input_text}]
+    messages: list[dict[str, str]] = []
+    system_prompt = (settings.openclaw_system_prompt or "").strip()
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.extend(history)
+    messages.append({"role": "user", "content": input_text})
+    return messages
 
 
 def _hermes_input_text(input_text: str, settings: AgentSettings) -> str:
     history = load_session_messages(settings, AGENT_HERMES)
+    system_prompt = (settings.hermes_system_prompt or "").strip()
     if not history:
+        if system_prompt:
+            return f"{system_prompt}\n\nLatest user request:\n{input_text}"
         return input_text
 
-    lines = [
-        f'Continue Mara Voice session "{agent_session_id_for_agent(settings, AGENT_HERMES)}".',
-        "Use the prior turns only as context. Answer the latest user request directly.",
-        "",
-        "Prior turns:",
-    ]
+    lines: list[str] = []
+    if system_prompt:
+        lines.extend([system_prompt, ""])
+    lines.extend(
+        [
+            f'Continue Mara Voice session "{agent_session_id_for_agent(settings, AGENT_HERMES)}".',
+            "Use the prior turns only as context. Answer the latest user request directly.",
+            "",
+            "Prior turns:",
+        ]
+    )
     for message in history:
         role = "User" if message["role"] == "user" else "Mara"
         lines.append(f"{role}: {message['content']}")
@@ -445,6 +557,7 @@ def _ask_hermes_ssh(
         logger.debug("Hermes stderr: %s", stderr_text)
 
     logger.info("Hermes replied in %.2fs with %d characters", elapsed, len(stdout_text))
+    stdout_text = _apply_guardrail(AGENT_HERMES, stdout_text, settings, logger)
     try:
         record_session_turn(settings, AGENT_HERMES, input_text, stdout_text)
     except Exception as exc:
@@ -562,11 +675,80 @@ def _ask_openclaw_http(
 
     reply = _extract_openclaw_reply(response_payload)
     logger.info("OpenClaw replied in %.2fs with %d characters", elapsed, len(reply))
+    reply = _apply_guardrail(AGENT_OPENCLAW, reply, settings, logger)
     try:
         record_session_turn(settings, AGENT_OPENCLAW, input_text, reply)
     except Exception as exc:
         logger.warning("Could not persist OpenClaw session history: %s", exc)
     return AgentReply(AGENT_OPENCLAW, agent_display_name(AGENT_OPENCLAW), reply, elapsed)
+
+
+_GUARDRAIL_DISPLAY_NAME = {AGENT_OPENCLAW: "Claw", AGENT_HERMES: "Mara"}
+_GUARDRAIL_WRONG_NAMES = {
+    AGENT_OPENCLAW: ("Mara", "Hermes"),
+    AGENT_HERMES: ("Claw", "OpenClaw"),
+}
+# Heuristics for fabricated "I talked to the other agent" claims. Flag-only: these
+# are surfaced in logs/events but never silently rewritten, since the meaning can't
+# be safely repaired.
+_FABRICATION_PATTERNS = (
+    re.compile(
+        r"\bI (?:just |already )?(?:pinged|messaged|texted|relayed|forwarded|"
+        r"sent (?:a |the )?(?:message|password|note|word)(?:\s+\w+)? to)\s+(?:her|him|mara|claw)\b",
+        re.I,
+    ),
+    re.compile(r"\b(?:she|he) (?:just )?(?:got it|hit me back|replied|responded|wrote back|messaged me)\b", re.I),
+    re.compile(r"\bdropped .{0,40}?\b(?:in|into)\b .{0,20}?\bdiscord\b", re.I),
+    re.compile(r"\bshared (?:system )?memory\b", re.I),
+)
+
+
+def guardrail_review(agent_id: str, text: str) -> tuple[str, list[str]]:
+    """Anchor agent identity in its own reply.
+
+    Returns ``(possibly_corrected_text, violations)``. Blatant first-person
+    self-misidentification ("I am Mara" from Claw) is rewritten to the correct
+    name; fabricated cross-agent relay claims are flagged but left untouched.
+    """
+    try:
+        normalized = normalize_agent_id(agent_id)
+    except ValueError:
+        return text, []
+    if not text or not text.strip():
+        return text, []
+
+    violations: list[str] = []
+    corrected = text
+    wrong_names = _GUARDRAIL_WRONG_NAMES.get(normalized, ())
+    if wrong_names:
+        correct = _GUARDRAIL_DISPLAY_NAME[normalized]
+        names = "|".join(re.escape(name) for name in wrong_names)
+        pattern = re.compile(
+            r"(?P<lead>\b(?:I am still|I am|I'm|Im|my name is)"
+            r"(?:\s+(?:actually|really|just|still|literally|currently|now|technically))?\s+)"
+            r"(?P<name>" + names + r")\b(?!['\w])",
+            re.I,
+        )
+
+        def _replace(match: "re.Match[str]") -> str:
+            violations.append(f"self-identified as {match.group('name')}")
+            return match.group("lead") + correct
+
+        corrected = pattern.sub(_replace, corrected)
+
+    if any(fab.search(corrected) for fab in _FABRICATION_PATTERNS):
+        violations.append("fabricated cross-agent relay")
+
+    return corrected, violations
+
+
+def _apply_guardrail(agent_id: str, text: str, settings: AgentSettings, logger: logging.Logger) -> str:
+    if not settings.agent_guardrail_enabled:
+        return text
+    corrected, violations = guardrail_review(agent_id, text)
+    if violations:
+        logger.warning("Guardrail flagged %s reply: %s", agent_id, "; ".join(sorted(set(violations))))
+    return corrected
 
 
 def ask_agent(
