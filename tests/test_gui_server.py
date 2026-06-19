@@ -49,8 +49,20 @@ class GuiServerTests(unittest.TestCase):
                     json={
                         "options": {
                             "tts_streaming": True,
+                            "async_agent_replies": True,
+                            "async_ack_text": "One second.",
+                            "async_followup_enabled": True,
+                            "async_followup_initial_delay_seconds": 2.0,
+                            "async_followup_poll_seconds": 4.0,
+                            "async_followup_max_attempts": 5,
+                            "agent_session_id": "voice-session",
+                            "hermes_session_id": "voice-session-hermes",
+                            "openclaw_session_id": "voice-session-openclaw",
+                            "agent_session_history_messages": 12,
+                            "agent_session_persistence": True,
+                            "voice_inbox_poll_seconds": 3.0,
                             "spoken_reply_char_limit": 1200,
-                            "tts_stream_chunk_char_limit": 180,
+                            "tts_stream_chunk_char_limit": 1200,
                         }
                     },
                 )
@@ -69,8 +81,20 @@ class GuiServerTests(unittest.TestCase):
 
         self.assertEqual(save_response.status_code, 200)
         self.assertTrue(save_response.json()["options"]["tts_streaming"])
+        self.assertTrue(save_response.json()["options"]["async_agent_replies"])
+        self.assertEqual(save_response.json()["options"]["async_ack_text"], "One second.")
+        self.assertTrue(save_response.json()["options"]["async_followup_enabled"])
+        self.assertEqual(save_response.json()["options"]["async_followup_initial_delay_seconds"], 2.0)
+        self.assertEqual(save_response.json()["options"]["async_followup_poll_seconds"], 4.0)
+        self.assertEqual(save_response.json()["options"]["async_followup_max_attempts"], 5)
+        self.assertEqual(save_response.json()["options"]["agent_session_id"], "voice-session")
+        self.assertEqual(save_response.json()["options"]["hermes_session_id"], "voice-session-hermes")
+        self.assertEqual(save_response.json()["options"]["openclaw_session_id"], "voice-session-openclaw")
+        self.assertEqual(save_response.json()["options"]["agent_session_history_messages"], 12)
+        self.assertTrue(save_response.json()["options"]["agent_session_persistence"])
+        self.assertEqual(save_response.json()["options"]["voice_inbox_poll_seconds"], 3.0)
         self.assertEqual(save_response.json()["options"]["spoken_reply_char_limit"], 1200)
-        self.assertEqual(save_response.json()["options"]["tts_stream_chunk_char_limit"], 180)
+        self.assertEqual(save_response.json()["options"]["tts_stream_chunk_char_limit"], 1200)
         self.assertEqual(state_response.status_code, 200)
         self.assertEqual(state_response.json()["current_status"], "THINKING")
         self.assertEqual(state_response.json()["last_user_text"], "hello")

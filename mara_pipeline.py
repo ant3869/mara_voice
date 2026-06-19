@@ -18,9 +18,15 @@ import soundfile as sf
 from mara_events import append_event
 from mara_agents import (
     DEFAULT_ACTIVE_AGENT,
+    DEFAULT_AGENT_SESSION_HISTORY_MESSAGES,
+    DEFAULT_AGENT_SESSION_HISTORY_PATH,
+    DEFAULT_AGENT_SESSION_ID,
+    DEFAULT_AGENT_SESSION_PERSISTENCE,
+    DEFAULT_HERMES_SESSION_ID,
     DEFAULT_OPENCLAW_BASE_URL,
     DEFAULT_OPENCLAW_MODEL,
     DEFAULT_OPENCLAW_TIMEOUT_SECONDS,
+    DEFAULT_OPENCLAW_SESSION_ID,
     AgentSettings,
     ask_agent,
     check_openclaw_health,
@@ -30,12 +36,21 @@ from mara_safety import redact_sensitive_text
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_CAPTURE_DIR = Path(
-    os.getenv(
-        "MARA_CAPTURE_DIR",
-        r"C:\Users\SuperHands\AppData\Roaming\sh.voicebox.app\captures",
-    )
-)
+
+
+def _default_capture_dir() -> Path:
+    explicit = os.getenv("MARA_CAPTURE_DIR")
+    if explicit:
+        return Path(explicit)
+    # Voicebox stores captures under the per-user roaming app data directory.
+    # Resolve it from the environment so the default is portable across machines
+    # instead of hardcoding a single user's profile path.
+    appdata = os.getenv("APPDATA")
+    base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+    return base / "sh.voicebox.app" / "captures"
+
+
+DEFAULT_CAPTURE_DIR = _default_capture_dir()
 DEFAULT_SSH_TARGET = os.getenv("MARA_SSH_TARGET", "ant@192.168.0.65")
 DEFAULT_HERMES_COMMAND = os.getenv("MARA_HERMES_COMMAND", "~/.local/bin/hermes")
 DEFAULT_TTS_URL = os.getenv("MARA_TTS_URL", "http://127.0.0.1:8000/tts")
@@ -103,6 +118,12 @@ class PipelineConfig:
     openclaw_base_url: str = DEFAULT_OPENCLAW_BASE_URL
     openclaw_model: str = DEFAULT_OPENCLAW_MODEL
     openclaw_timeout_seconds: float | None = DEFAULT_OPENCLAW_TIMEOUT_SECONDS
+    agent_session_id: str = DEFAULT_AGENT_SESSION_ID
+    hermes_session_id: str = DEFAULT_HERMES_SESSION_ID
+    openclaw_session_id: str = DEFAULT_OPENCLAW_SESSION_ID
+    agent_session_history_path: Path = DEFAULT_AGENT_SESSION_HISTORY_PATH
+    agent_session_history_messages: int = DEFAULT_AGENT_SESSION_HISTORY_MESSAGES
+    agent_session_persistence: bool = DEFAULT_AGENT_SESSION_PERSISTENCE
     tts_url: str = DEFAULT_TTS_URL
     tts_health_url: str = DEFAULT_TTS_HEALTH_URL
     audio_device: str | int | None = DEFAULT_AUDIO_DEVICE
@@ -130,7 +151,7 @@ class StatusFormatter(logging.Formatter):
         return f"{color}[{status}] {message}{reset}"
 
 
-def configure_logging(level: str = "INFO") -> logging.Logger:
+def configure_logging(level: str = "INFO", log_dir: Path | None = None) -> logging.Logger:
     logger = logging.getLogger("mara_voice")
     resolved_level = getattr(logging, str(level).upper(), logging.INFO)
 
@@ -143,7 +164,8 @@ def configure_logging(level: str = "INFO") -> logging.Logger:
     logger.setLevel(resolved_level)
     logger.propagate = False
 
-    DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    resolved_log_dir = log_dir or DEFAULT_LOG_DIR
+    resolved_log_dir.mkdir(parents=True, exist_ok=True)
     log_format = logging.Formatter(
         "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
     )
@@ -154,7 +176,7 @@ def configure_logging(level: str = "INFO") -> logging.Logger:
     console_handler.setFormatter(console_format)
 
     file_handler = RotatingFileHandler(
-        DEFAULT_LOG_DIR / "mara_voice.log",
+        resolved_log_dir / "mara_voice.log",
         maxBytes=1_000_000,
         backupCount=3,
         encoding="utf-8",
@@ -277,7 +299,7 @@ def run_diagnostics(
     logger.info("Diagnostics started")
     logger.info("Python executable: %s", sys.executable)
     logger.info("Working directory: %s", Path.cwd())
-    logger.info("Log file: %s", DEFAULT_LOG_DIR / "mara_voice.log")
+    logger.info("Log file: %s", config.log_dir / "mara_voice.log")
     logger.info("Capture directory: %s", config.capture_dir)
 
     if config.capture_dir.exists():
@@ -394,6 +416,12 @@ def ask_selected_agent(
             openclaw_base_url=config.openclaw_base_url,
             openclaw_model=config.openclaw_model,
             openclaw_timeout_seconds=config.openclaw_timeout_seconds,
+            agent_session_id=config.agent_session_id,
+            hermes_session_id=config.hermes_session_id,
+            openclaw_session_id=config.openclaw_session_id,
+            agent_session_history_path=config.agent_session_history_path,
+            agent_session_history_messages=config.agent_session_history_messages,
+            agent_session_persistence=config.agent_session_persistence,
         ),
         logger,
         status_callback=lambda status, message, details=None: emit_status(logger, status, message, details),

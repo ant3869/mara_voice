@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import os
+import random
 import time
 from datetime import datetime
 from queue import Empty, Queue
 from pathlib import Path
-from threading import Thread
+from threading import Event, Lock, Thread
+
+from dataclasses import replace
 
 import requests
 import sounddevice as sd
@@ -16,13 +20,21 @@ import soundfile as sf
 from mara_agent_state import DEFAULT_AGENT_ROUTE_STATE_PATH, consume_agent_route, update_agent_route_state
 from mara_agents import (
     DEFAULT_ACTIVE_AGENT,
+    DEFAULT_AGENT_SESSION_HISTORY_MESSAGES,
+    DEFAULT_AGENT_SESSION_HISTORY_PATH,
+    DEFAULT_AGENT_SESSION_ID,
+    DEFAULT_AGENT_SESSION_PERSISTENCE,
+    DEFAULT_HERMES_SESSION_ID,
     DEFAULT_OPENCLAW_BASE_URL,
     DEFAULT_OPENCLAW_MODEL,
     DEFAULT_OPENCLAW_TIMEOUT_SECONDS,
+    DEFAULT_OPENCLAW_SESSION_ID,
     AgentError,
     AgentReply,
     AgentSettings,
     ask_agent,
+    agent_display_name,
+    normalize_agent_id,
     redact_url,
 )
 from mara_events import append_event, read_recent_events
@@ -54,6 +66,7 @@ except ImportError:
     Observer = None
     WATCHDOG_AVAILABLE = False
 
+BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_VOICEBOX_API = "http://127.0.0.1:17493/transcribe"
 DEFAULT_TTS_URL = "http://127.0.0.1:8000/tts"
 DEFAULT_TRANSCRIBE_TIMEOUT_SECONDS = float(os.getenv("MARA_TRANSCRIBE_TIMEOUT", "60"))
@@ -62,11 +75,69 @@ DEFAULT_STATUS_INTERVAL_SECONDS = float(os.getenv("MARA_STATUS_INTERVAL", "10"))
 DEFAULT_SSH_CONNECT_TIMEOUT_SECONDS = float(os.getenv("MARA_SSH_CONNECT_TIMEOUT", "5"))
 DEFAULT_SPOKEN_REPLY_CHAR_LIMIT = int(os.getenv("MARA_SPOKEN_REPLY_CHAR_LIMIT", "900"))
 DEFAULT_TTS_CHUNK_CHAR_LIMIT = int(os.getenv("MARA_TTS_CHUNK_CHAR_LIMIT", "450"))
-DEFAULT_TTS_STREAMING = os.getenv("MARA_TTS_STREAMING", "0") == "1"
+DEFAULT_TTS_STREAMING = os.getenv("MARA_TTS_STREAMING", "1") == "1"
 DEFAULT_TTS_STREAM_URL = os.getenv("MARA_TTS_STREAM_URL", "http://127.0.0.1:8000/tts/stream")
-DEFAULT_TTS_STREAM_CHUNK_CHAR_LIMIT = int(os.getenv("MARA_TTS_STREAM_CHUNK_CHAR_LIMIT", "180"))
-DEFAULT_TTS_STREAM_PREBUFFER_SECONDS = float(os.getenv("MARA_TTS_STREAM_PREBUFFER_SECONDS", "8"))
+DEFAULT_TTS_STREAM_CHUNK_CHAR_LIMIT = int(os.getenv("MARA_TTS_STREAM_CHUNK_CHAR_LIMIT", "1200"))
+DEFAULT_TTS_STREAM_PREBUFFER_SECONDS = float(os.getenv("MARA_TTS_STREAM_PREBUFFER_SECONDS", "0.5"))
+DEFAULT_TTS_STREAM_PREBUFFER_DYNAMIC = os.getenv("MARA_TTS_STREAM_PREBUFFER_DYNAMIC", "1") == "1"
+DEFAULT_TTS_STREAM_PREBUFFER_MAX_SECONDS = float(os.getenv("MARA_TTS_STREAM_PREBUFFER_MAX_SECONDS", "4"))
 DEFAULT_PROCESS_EXISTING_SECONDS = float(os.getenv("MARA_PROCESS_EXISTING_SECONDS", "600"))
+DEFAULT_ASYNC_AGENT_REPLIES = os.getenv("MARA_ASYNC_AGENT_REPLIES", "1") == "1"
+# Agent-generated acks need their own agent round trip, so they arrive about when the
+# real answer does and cannot fill dead air. Preset phrases are spoken instantly, so
+# they are the useful default; agent acks remain available via MARA_ASYNC_ACK_AGENT=1.
+DEFAULT_ASYNC_ACK_AGENT = os.getenv("MARA_ASYNC_ACK_AGENT", "0") == "1"
+DEFAULT_ASYNC_ACK_GRACE_SECONDS = float(os.getenv("MARA_ASYNC_ACK_GRACE_SECONDS", "5"))
+DEFAULT_ASYNC_ACK_TEXT = os.getenv(
+    "MARA_ASYNC_ACK_TEXT",
+    "Yeah, let me dig into that real quick.",
+)
+DEFAULT_ASYNC_ACK_PHRASE_POOL = "\n".join(
+    [
+        "On it.",
+        "Got it, working on that now.",
+        "Sure, give me a sec.",
+        "Alright, let me look into that.",
+        "One moment.",
+    ]
+)
+DEFAULT_ASYNC_ACK_PHRASES = os.getenv("MARA_ASYNC_ACK_PHRASES", DEFAULT_ASYNC_ACK_PHRASE_POOL)
+DEFAULT_ASYNC_FOLLOWUP_ENABLED = os.getenv("MARA_ASYNC_FOLLOWUP_ENABLED", "1") == "1"
+DEFAULT_ASYNC_FOLLOWUP_INITIAL_DELAY_SECONDS = float(os.getenv("MARA_ASYNC_FOLLOWUP_INITIAL_DELAY_SECONDS", "3"))
+DEFAULT_ASYNC_FOLLOWUP_POLL_SECONDS = float(os.getenv("MARA_ASYNC_FOLLOWUP_POLL_SECONDS", "8"))
+DEFAULT_ASYNC_FOLLOWUP_MAX_ATTEMPTS = int(os.getenv("MARA_ASYNC_FOLLOWUP_MAX_ATTEMPTS", "60"))
+DEFAULT_VOICE_INBOX_PATH = Path(
+    os.getenv("MARA_VOICE_INBOX_PATH", str(BASE_DIR / "config" / "mara_voice_inbox.jsonl"))
+)
+DEFAULT_VOICE_INBOX_POLL_SECONDS = float(os.getenv("MARA_VOICE_INBOX_POLL_SECONDS", "5"))
+
+DEFERRED_REPLY_MARKERS = (
+    "background agent",
+    "background task",
+    "running asynchronously",
+    "it's running",
+    "it is running",
+    "when it finishes",
+    "whenever it finishes",
+    "once it finishes",
+    "when it's done",
+    "once it's done",
+    "i'll follow up",
+    "i will follow up",
+    "i'll update",
+    "i will update",
+    "i'll let you know",
+    "i will let you know",
+    "i'll pop back",
+    "pop right back",
+    # NOTE: bare "sub-agent"/"subagent" are intentionally NOT markers - simply mentioning
+    # sub-agents in a finished answer must not be mistaken for deferred/ongoing work. A
+    # genuine deferral still matches the future/ongoing phrases above (e.g. "I'll follow
+    # up", "when it finishes").
+)
+
+PENDING_FOLLOWUP_EXACT = {"STILL_WORKING", "NOT_READY", "PENDING"}
+COMPLETION_REPLY_MARKERS = ("complete", "completed", "done", "finished", "final result", "result is ready")
 
 
 def parse_optional_timeout(value: str | None, default: float | None) -> float | None:
@@ -143,6 +214,23 @@ def split_text_for_tts(text: str, max_chars: int) -> list[str]:
     return chunks
 
 
+def looks_like_deferred_reply(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    return any(marker in normalized for marker in DEFERRED_REPLY_MARKERS)
+
+
+def is_pending_followup_reply(text: str) -> bool:
+    normalized = " ".join(text.strip().split())
+    if normalized.upper().rstrip(".!") in PENDING_FOLLOWUP_EXACT:
+        return True
+    lowered = normalized.lower()
+    if any(marker in lowered for marker in COMPLETION_REPLY_MARKERS):
+        return False
+    if len(normalized) <= 280 and looks_like_deferred_reply(normalized):
+        return True
+    return False
+
+
 def find_existing_capture_files(
     capture_dir: Path,
     max_age_seconds: float,
@@ -211,6 +299,23 @@ class WavCaptureProcessor:
         tts_streaming: bool = DEFAULT_TTS_STREAMING,
         tts_stream_chunk_char_limit: int = DEFAULT_TTS_STREAM_CHUNK_CHAR_LIMIT,
         tts_stream_prebuffer_seconds: float = DEFAULT_TTS_STREAM_PREBUFFER_SECONDS,
+        tts_stream_prebuffer_dynamic: bool = DEFAULT_TTS_STREAM_PREBUFFER_DYNAMIC,
+        tts_stream_prebuffer_max_seconds: float = DEFAULT_TTS_STREAM_PREBUFFER_MAX_SECONDS,
+        async_agent_replies: bool = DEFAULT_ASYNC_AGENT_REPLIES,
+        async_ack_agent: bool = DEFAULT_ASYNC_ACK_AGENT,
+        async_ack_grace_seconds: float = DEFAULT_ASYNC_ACK_GRACE_SECONDS,
+        async_ack_text: str = DEFAULT_ASYNC_ACK_TEXT,
+        async_ack_phrases: str = DEFAULT_ASYNC_ACK_PHRASES,
+        async_followup_enabled: bool = DEFAULT_ASYNC_FOLLOWUP_ENABLED,
+        async_followup_initial_delay_seconds: float = DEFAULT_ASYNC_FOLLOWUP_INITIAL_DELAY_SECONDS,
+        async_followup_poll_seconds: float = DEFAULT_ASYNC_FOLLOWUP_POLL_SECONDS,
+        async_followup_max_attempts: int = DEFAULT_ASYNC_FOLLOWUP_MAX_ATTEMPTS,
+        agent_session_id: str = DEFAULT_AGENT_SESSION_ID,
+        hermes_session_id: str = DEFAULT_HERMES_SESSION_ID,
+        openclaw_session_id: str = DEFAULT_OPENCLAW_SESSION_ID,
+        agent_session_history_path: Path = DEFAULT_AGENT_SESSION_HISTORY_PATH,
+        agent_session_history_messages: int = DEFAULT_AGENT_SESSION_HISTORY_MESSAGES,
+        agent_session_persistence: bool = DEFAULT_AGENT_SESSION_PERSISTENCE,
     ) -> None:
         self.capture_dir = capture_dir
         self.ssh_target = ssh_target
@@ -236,9 +341,27 @@ class WavCaptureProcessor:
         self.tts_streaming = tts_streaming
         self.tts_stream_chunk_char_limit = max(40, tts_stream_chunk_char_limit)
         self.tts_stream_prebuffer_seconds = max(0.0, tts_stream_prebuffer_seconds)
+        self.tts_stream_prebuffer_dynamic = tts_stream_prebuffer_dynamic
+        self.tts_stream_prebuffer_max_seconds = max(self.tts_stream_prebuffer_seconds, tts_stream_prebuffer_max_seconds)
+        self.async_agent_replies = async_agent_replies
+        self.async_ack_agent = bool(async_ack_agent)
+        self.async_ack_grace_seconds = max(0.0, async_ack_grace_seconds)
+        self.async_ack_text = " ".join(str(async_ack_text or "").split())
+        self.async_ack_phrases = self._parse_ack_phrases(async_ack_phrases)
+        self.async_followup_enabled = async_followup_enabled
+        self.async_followup_initial_delay_seconds = max(0.0, async_followup_initial_delay_seconds)
+        self.async_followup_poll_seconds = max(1.0, async_followup_poll_seconds)
+        self.async_followup_max_attempts = max(0, int(async_followup_max_attempts))
+        self.agent_session_id = agent_session_id
+        self.hermes_session_id = hermes_session_id
+        self.openclaw_session_id = openclaw_session_id
+        self.agent_session_history_path = agent_session_history_path
+        self.agent_session_history_messages = max(0, int(agent_session_history_messages))
+        self.agent_session_persistence = agent_session_persistence
         self.voicebox_session = requests.Session()
         self.tts_session = requests.Session()
         self.agent_session = requests.Session()
+        self.playback_lock = Lock()
         self.recent_files: dict[Path, float] = {}
         self.processed_files: dict[Path, float] = {}
         self.processed_file_retention_seconds = 24 * 60 * 60
@@ -352,6 +475,441 @@ class WavCaptureProcessor:
         except Exception as exc:
             self.logger.debug("Could not write event: %s", exc)
 
+    def _agent_settings_for_next_route(self) -> AgentSettings | None:
+        try:
+            route = consume_agent_route(
+                self.agent_route_state_path,
+                fallback_active_agent=self.active_agent,
+            )
+        except Exception as exc:
+            self.logger.error("Could not read agent route state: %s", exc)
+            self._append_event("error", "ERROR", "Could not read agent route state", {"error": str(exc)})
+            return None
+
+        settings = AgentSettings(
+            active_agent=route.agent_id,
+            ssh_target=self.ssh_target,
+            hermes_command=self.hermes_command,
+            ssh_timeout_seconds=self.ssh_timeout_seconds,
+            ssh_connect_timeout_seconds=self.ssh_connect_timeout_seconds,
+            openclaw_base_url=self.openclaw_base_url,
+            openclaw_model=self.openclaw_model,
+            openclaw_timeout_seconds=self.openclaw_timeout_seconds,
+            agent_session_id=self.agent_session_id,
+            hermes_session_id=self.hermes_session_id,
+            openclaw_session_id=self.openclaw_session_id,
+            agent_session_history_path=self.agent_session_history_path,
+            agent_session_history_messages=self.agent_session_history_messages,
+            agent_session_persistence=self.agent_session_persistence,
+        )
+        if route.one_shot:
+            self.logger.info("Using one-shot agent route: %s", route.agent_id)
+        return settings
+
+    def _request_agent_reply(
+        self,
+        text: str,
+        settings: AgentSettings,
+        requests_session: requests.Session | None = None,
+    ) -> AgentReply | None:
+        try:
+            return ask_agent(
+                text,
+                settings,
+                self.logger,
+                status_callback=lambda status, message, details=None: emit_status(
+                    self.logger, status, message, details
+                ),
+                status_interval_seconds=self.status_interval_seconds,
+                requests_session=requests_session or self.agent_session,
+            )
+        except AgentError as exc:
+            self.logger.error("Agent request failed: %s", exc)
+            self._append_event(
+                "error",
+                "ERROR",
+                "Agent request failed",
+                {"agent": settings.active_agent, "error": str(exc)},
+            )
+            return None
+
+    def _send_to_agent(self, text: str, settings: AgentSettings | None = None) -> AgentReply | None:
+        if settings is None:
+            settings = self._agent_settings_for_next_route()
+        if settings is None:
+            return None
+        return self._request_agent_reply(text, settings)
+
+    def _play_spoken_reply(self, spoken_reply: str, voice_id: str, message: str) -> float:
+        tts_start = time.monotonic()
+        with self.playback_lock:
+            emit_status(self.logger, "TALKING", message)
+            self._play_tts_reply(spoken_reply, voice_id=voice_id)
+        return time.monotonic() - tts_start
+
+    def _handle_agent_reply(
+        self,
+        agent_reply: AgentReply,
+        pipeline_start: float | None,
+        pipeline_agent_seconds: float | None,
+        source: str = "agent",
+        terminal_label: str = "[Mara]",
+    ) -> None:
+        safe_mara_reply = redact_sensitive_text(agent_reply.text)
+        print(f"{terminal_label}: {safe_mara_reply}")
+        details: dict[str, object] = {
+            "text": safe_mara_reply,
+            "agent": agent_reply.agent_id,
+            "agent_name": agent_reply.agent_name,
+            "agent_seconds": round(agent_reply.elapsed_seconds, 3),
+            "source": source,
+        }
+        if pipeline_agent_seconds is not None:
+            details["pipeline_agent_seconds"] = round(pipeline_agent_seconds, 3)
+        if source in ("async", "async_followup"):
+            details["async"] = True
+
+        event_message = f"{agent_reply.agent_name} reply"
+        if source == "async":
+            event_message = f"{agent_reply.agent_name} async reply"
+        elif source == "async_followup":
+            event_message = f"{agent_reply.agent_name} async follow-up"
+        elif source == "voice_inbox":
+            event_message = "Voice inbox reply"
+
+        self._append_event("conversation", "MARA", event_message, details)
+        self.logger.info(
+            "%s replied: %s (agent: %.2fs, source=%s)",
+            agent_reply.agent_name,
+            safe_mara_reply,
+            agent_reply.elapsed_seconds,
+            source,
+        )
+        spoken_reply = prepare_spoken_reply(safe_mara_reply, self.spoken_reply_char_limit)
+        if spoken_reply != " ".join(safe_mara_reply.split()):
+            self.logger.info(
+                "Shortened spoken reply from %d to %d characters for faster TTS",
+                len(" ".join(safe_mara_reply.split())),
+                len(spoken_reply),
+            )
+
+        tts_time = self._play_spoken_reply(
+            spoken_reply,
+            agent_reply.agent_id,
+            "Generating and playing reply",
+        )
+        spoken_chars = len(spoken_reply)
+        chars_per_second = round(spoken_chars / tts_time, 1) if tts_time > 0 else 0.0
+        timing_details: dict[str, object] = {
+            "agent": agent_reply.agent_id,
+            "agent_name": agent_reply.agent_name,
+            "agent_seconds": round(agent_reply.elapsed_seconds, 3),
+            "tts_seconds": round(tts_time, 3),
+            "spoken_chars": spoken_chars,
+            "chars_per_second": chars_per_second,
+            "source": source,
+        }
+        if pipeline_start is not None:
+            total_time = time.monotonic() - pipeline_start
+            timing_details["total_seconds"] = round(total_time, 3)
+            self.logger.info("Pipeline complete (TTS: %.2fs, total: %.2fs)", tts_time, total_time)
+        else:
+            self.logger.info("Voice inbox playback complete (TTS: %.2fs)", tts_time)
+        self._append_event(
+            "metric",
+            "TIMING",
+            f"{agent_reply.agent_name} spoke in {tts_time:.2f}s ({chars_per_second:.1f} chars/s)",
+            timing_details,
+        )
+        emit_status(self.logger, "LISTENING", "Waiting for next capture")
+
+    @staticmethod
+    def _parse_ack_phrases(raw: object) -> list[str]:
+        items = raw if isinstance(raw, (list, tuple)) else str(raw or "").splitlines()
+        phrases: list[str] = []
+        for item in items:
+            cleaned = " ".join(str(item).split())
+            if cleaned:
+                phrases.append(cleaned)
+        return phrases
+
+    def _pick_static_ack(self) -> str:
+        if self.async_ack_phrases:
+            return random.choice(self.async_ack_phrases)
+        return self.async_ack_text
+
+    def _build_ack_prompt(self, original_text: str) -> str:
+        return "\n".join(
+            [
+                "You are the user's voice assistant, replying out loud.",
+                "In ONE very short spoken sentence of 10 words or fewer, acknowledge that you heard the request and are starting on it.",
+                "Do not answer or solve the request yet, and do not state or change your name.",
+                "No preamble, no lists, no markdown - just the brief spoken sentence.",
+                "",
+                "User request:",
+                original_text,
+            ]
+        )
+
+    def _generate_agent_ack(self, original_text: str, settings: AgentSettings) -> str | None:
+        # Acknowledgement turns are throwaway: do not persist them, and run them under a
+        # separate "-ack" session id so the meta-prompt cannot leak into (or be remembered
+        # by) the real conversation on the agent/gateway side.
+        ack_base = (settings.agent_session_id or DEFAULT_AGENT_SESSION_ID) + "-ack"
+        ack_settings = replace(
+            settings,
+            agent_session_persistence=False,
+            agent_session_id=ack_base,
+            hermes_session_id="",
+            openclaw_session_id="",
+        )
+        session = requests.Session()
+        try:
+            reply = self._request_agent_reply(
+                self._build_ack_prompt(original_text), ack_settings, requests_session=session
+            )
+        finally:
+            session.close()
+        if reply is None:
+            return None
+        text = " ".join(reply.text.split())
+        return text or None
+
+    def _speak_ack(self, original_text: str, settings: AgentSettings, reply_started: Event | None = None) -> None:
+        voice_id = settings.active_agent
+        if self.async_ack_agent:
+            emit_status(
+                self.logger,
+                "THINKING",
+                "Composing a quick acknowledgement",
+                {"agent": voice_id, "async": True},
+            )
+            generated: str | None = None
+            try:
+                generated = self._generate_agent_ack(original_text, settings)
+            except Exception as exc:
+                self.logger.warning("Agent acknowledgement generation failed: %s", exc)
+            # Fall back to a preset phrase if generation fails or returns nothing.
+            spoken_text = generated or self._pick_static_ack()
+            # Agent acks take their own full round trip, which often finishes right as
+            # the real answer does. Give the answer priority: if it lands now or within
+            # a moment, drop the ack so we never speak a redundant, out-of-order reply.
+            if reply_started is not None and reply_started.wait(timeout=1.5):
+                self.logger.info("Skipping acknowledgement; the agent reply already arrived")
+                return
+        else:
+            spoken_text = self._pick_static_ack()
+            # Preset acks are instant, so only skip if the answer is already in hand.
+            if reply_started is not None and reply_started.is_set():
+                self.logger.info("Skipping acknowledgement; the agent reply already arrived")
+                return
+
+        safe_ack = redact_sensitive_text(spoken_text)
+        if not safe_ack:
+            return
+
+        print(f"[Mara]: {safe_ack}")
+        self._append_event(
+            "conversation",
+            "MARA",
+            "Mara acknowledgement",
+            {
+                "text": safe_ack,
+                "agent": voice_id,
+                "agent_name": agent_display_name(voice_id),
+                "async": True,
+                "source": "ack",
+                "ack_mode": "agent" if self.async_ack_agent else "preset",
+            },
+        )
+        self._play_spoken_reply(safe_ack, voice_id, "Playing acknowledgement")
+
+    def _build_async_followup_prompt(self, original_text: str, attempt: int) -> str:
+        return "\n".join(
+            [
+                "Automatic Mara Voice follow-up check.",
+                "Your previous reply said background work was still running.",
+                "Do not start a new task. Check the existing work in this same session.",
+                "If the result is ready, return only the final answer or useful update for voice playback.",
+                "If it is not ready yet, return exactly: STILL_WORKING",
+                f"Follow-up attempt: {attempt}",
+                "",
+                "Original user request:",
+                original_text,
+            ]
+        )
+
+    def _poll_async_followup(
+        self,
+        original_text: str,
+        settings: AgentSettings,
+        pipeline_start: float,
+    ) -> None:
+        if not self.async_followup_enabled or self.async_followup_max_attempts <= 0:
+            return
+
+        if self.async_followup_initial_delay_seconds:
+            time.sleep(self.async_followup_initial_delay_seconds)
+
+        for attempt in range(1, self.async_followup_max_attempts + 1):
+            emit_status(
+                self.logger,
+                "THINKING",
+                f"Checking background result ({attempt}/{self.async_followup_max_attempts})",
+                {"agent": settings.active_agent, "async_followup": True, "attempt": attempt},
+            )
+            session = requests.Session()
+            try:
+                followup_reply = self._request_agent_reply(
+                    self._build_async_followup_prompt(original_text, attempt),
+                    settings,
+                    requests_session=session,
+                )
+            finally:
+                session.close()
+
+            if followup_reply is not None and not is_pending_followup_reply(followup_reply.text):
+                self._handle_agent_reply(
+                    followup_reply,
+                    pipeline_start=pipeline_start,
+                    pipeline_agent_seconds=None,
+                    source="async_followup",
+                    terminal_label="[Mara/follow-up]",
+                )
+                return
+
+            emit_status(
+                self.logger,
+                "LISTENING",
+                "Background task still working",
+                {"agent": settings.active_agent, "async_followup": True, "attempt": attempt},
+            )
+            if attempt < self.async_followup_max_attempts:
+                time.sleep(self.async_followup_poll_seconds)
+
+        timeout_reply = AgentReply(
+            settings.active_agent,
+            agent_display_name(settings.active_agent),
+            "I am still waiting on that background work and could not retrieve a final result yet.",
+            0.0,
+        )
+        self._handle_agent_reply(
+            timeout_reply,
+            pipeline_start=pipeline_start,
+            pipeline_agent_seconds=None,
+            source="async_followup",
+            terminal_label="[Mara/follow-up]",
+        )
+
+    def _complete_async_agent_reply(
+        self,
+        text: str,
+        settings: AgentSettings,
+        pipeline_start: float,
+        reply_started: Event | None = None,
+    ) -> None:
+        request_start = time.monotonic()
+        session = requests.Session()
+        try:
+            agent_reply = self._request_agent_reply(text, settings, requests_session=session)
+        finally:
+            session.close()
+        agent_time = time.monotonic() - request_start
+        # Tell the acknowledgement path the real answer is in, so a fast reply can
+        # skip the ack entirely instead of speaking ack + answer.
+        if reply_started is not None:
+            reply_started.set()
+        if agent_reply is None:
+            emit_status(self.logger, "LISTENING", "Waiting for next capture")
+            return
+
+        self._handle_agent_reply(
+            agent_reply,
+            pipeline_start=pipeline_start,
+            pipeline_agent_seconds=agent_time,
+            source="async",
+        )
+        # Only poll for a later result if the reply actually says work is still
+        # running. is_pending_followup_reply also requires the reply to be short and
+        # free of completion words, so a complete answer that merely *mentions*
+        # sub-agents (e.g. "I spun up two sub-agents and they found ...") is not
+        # mistaken for a deferral and does not trigger a redundant second answer.
+        if is_pending_followup_reply(agent_reply.text):
+            self._poll_async_followup(text, settings, pipeline_start)
+
+    def _start_async_agent_reply(
+        self,
+        text: str,
+        pipeline_start: float,
+        settings: AgentSettings | None = None,
+    ) -> Thread | None:
+        if settings is None:
+            settings = self._agent_settings_for_next_route()
+        if settings is None:
+            emit_status(self.logger, "LISTENING", "Waiting for next capture")
+            return None
+
+        reply_started = Event()
+        thread = Thread(
+            target=self._complete_async_agent_reply,
+            args=(text, settings, pipeline_start, reply_started),
+            daemon=True,
+        )
+        thread.start()
+        emit_status(
+            self.logger,
+            "THINKING",
+            f"{agent_display_name(settings.active_agent)} is working in the background",
+            {"agent": settings.active_agent, "async": True},
+        )
+        self._maybe_speak_ack(text, settings, reply_started)
+        emit_status(self.logger, "LISTENING", "Waiting for next capture while Mara works")
+        return thread
+
+    def _maybe_speak_ack(self, text: str, settings: AgentSettings, reply_started: Event) -> None:
+        # Only fill dead air if the real answer is slow. If it arrives within the grace
+        # window, skip the acknowledgement so short prompts get a single spoken response.
+        if self.async_ack_grace_seconds > 0 and reply_started.wait(timeout=self.async_ack_grace_seconds):
+            return
+        self._speak_ack(text, settings, reply_started)
+
+    def process_voice_inbox_payload(self, payload: object) -> bool:
+        if isinstance(payload, str):
+            data: dict[str, object] = {"text": payload}
+        elif isinstance(payload, dict):
+            data = payload
+        else:
+            self.logger.warning("Ignoring voice inbox payload with unsupported type: %s", type(payload).__name__)
+            return False
+
+        text = str(data.get("text") or data.get("message") or "").strip()
+        if not text:
+            self.logger.warning("Ignoring voice inbox payload without text")
+            return False
+
+        raw_voice_id = str(data.get("voice_id") or data.get("agent") or self.active_agent)
+        try:
+            voice_id = normalize_agent_id(raw_voice_id)
+        except ValueError:
+            self.logger.warning("Voice inbox requested unsupported voice_id=%s; using Hermes", raw_voice_id)
+            voice_id = "hermes"
+
+        agent_name = str(data.get("agent_name") or agent_display_name(voice_id))
+        try:
+            elapsed_seconds = float(data.get("elapsed_seconds") or 0.0)
+        except (TypeError, ValueError):
+            elapsed_seconds = 0.0
+
+        reply = AgentReply(voice_id, agent_name, text, elapsed_seconds)
+        self._handle_agent_reply(
+            reply,
+            pipeline_start=None,
+            pipeline_agent_seconds=None,
+            source="voice_inbox",
+            terminal_label="[Mara/inbox]",
+        )
+        return True
+
     def _process_wav(self, wav_path: Path) -> None:
         pipeline_start = time.monotonic()
         self.logger.info("Processing audio capture: %s", wav_path.name)
@@ -377,58 +935,40 @@ class WavCaptureProcessor:
 
         safe_transcribed_text = redact_sensitive_text(transcribed_text)
         print(f"[You]: {safe_transcribed_text}")
+        settings = self._agent_settings_for_next_route()
+        if settings is None:
+            emit_status(self.logger, "LISTENING", "Waiting for next capture")
+            return
         self._append_event(
             "conversation",
             "USER",
             "User transcription",
-            {"text": safe_transcribed_text, "transcription_seconds": round(transcribe_time, 3)},
+            {
+                "text": safe_transcribed_text,
+                "transcription_seconds": round(transcribe_time, 3),
+                "agent": settings.active_agent,
+                "agent_name": agent_display_name(settings.active_agent),
+            },
         )
         self.logger.info("User said: %s (transcription: %.2fs)", safe_transcribed_text, transcribe_time)
 
+        if self.async_agent_replies:
+            self._start_async_agent_reply(transcribed_text, pipeline_start, settings)
+            return
+
         ssh_start = time.monotonic()
-        emit_status(self.logger, "THINKING", "Sending text to Mara")
-        agent_reply = self._send_to_agent(transcribed_text)
+        emit_status(
+            self.logger,
+            "THINKING",
+            f"Sending text to {agent_display_name(settings.active_agent)}",
+            {"agent": settings.active_agent},
+        )
+        agent_reply = self._send_to_agent(transcribed_text, settings)
         ssh_time = time.monotonic() - ssh_start
         if agent_reply is None:
             emit_status(self.logger, "LISTENING", "Waiting for next capture")
             return
-        mara_reply = agent_reply.text
-        safe_mara_reply = redact_sensitive_text(mara_reply)
-
-        print(f"[Mara]: {safe_mara_reply}")
-        self._append_event(
-            "conversation",
-            "MARA",
-            f"{agent_reply.agent_name} reply",
-            {
-                "text": safe_mara_reply,
-                "agent": agent_reply.agent_id,
-                "agent_name": agent_reply.agent_name,
-                "agent_seconds": round(agent_reply.elapsed_seconds, 3),
-                "pipeline_agent_seconds": round(ssh_time, 3),
-            },
-        )
-        self.logger.info(
-            "%s replied: %s (agent: %.2fs)",
-            agent_reply.agent_name,
-            safe_mara_reply,
-            agent_reply.elapsed_seconds,
-        )
-        spoken_reply = prepare_spoken_reply(safe_mara_reply, self.spoken_reply_char_limit)
-        if spoken_reply != " ".join(safe_mara_reply.split()):
-            self.logger.info(
-                "Shortened spoken reply from %d to %d characters for faster TTS",
-                len(" ".join(safe_mara_reply.split())),
-                len(spoken_reply),
-            )
-
-        tts_start = time.monotonic()
-        emit_status(self.logger, "TALKING", "Generating and playing reply")
-        self._play_tts_reply(spoken_reply, voice_id=agent_reply.agent_id)
-        tts_time = time.monotonic() - tts_start
-        total_time = time.monotonic() - pipeline_start
-        self.logger.info("Pipeline complete (TTS: %.2fs, total: %.2fs)", tts_time, total_time)
-        emit_status(self.logger, "LISTENING", "Waiting for next capture")
+        self._handle_agent_reply(agent_reply, pipeline_start, ssh_time)
 
     def _transcribe_wav(self, wav_path: Path) -> str:
         self.logger.info("Sending audio to Voicebox transcription at %s", DEFAULT_VOICEBOX_API)
@@ -461,44 +1001,6 @@ class WavCaptureProcessor:
             return ""
 
         return text
-
-    def _send_to_agent(self, text: str) -> AgentReply | None:
-        try:
-            route = consume_agent_route(
-                self.agent_route_state_path,
-                fallback_active_agent=self.active_agent,
-            )
-        except Exception as exc:
-            self.logger.error("Could not read agent route state: %s", exc)
-            return None
-
-        settings = AgentSettings(
-            active_agent=route.agent_id,
-            ssh_target=self.ssh_target,
-            hermes_command=self.hermes_command,
-            ssh_timeout_seconds=self.ssh_timeout_seconds,
-            ssh_connect_timeout_seconds=self.ssh_connect_timeout_seconds,
-            openclaw_base_url=self.openclaw_base_url,
-            openclaw_model=self.openclaw_model,
-            openclaw_timeout_seconds=self.openclaw_timeout_seconds,
-        )
-        if route.one_shot:
-            self.logger.info("Using one-shot agent route: %s", route.agent_id)
-
-        try:
-            return ask_agent(
-                text,
-                settings,
-                self.logger,
-                status_callback=lambda status, message, details=None: emit_status(
-                    self.logger, status, message, details
-                ),
-                status_interval_seconds=self.status_interval_seconds,
-                requests_session=self.agent_session,
-            )
-        except AgentError as exc:
-            self.logger.error("Agent request failed: %s", exc)
-            return None
 
     def _request_tts_audio(self, text: str, timeout_seconds: float | None, voice_id: str) -> bytes | None:
         response = self.tts_session.post(
@@ -698,11 +1200,35 @@ class WavCaptureProcessor:
         stream = None
         prebuffer_chunks = []
         prebuffer_samples = 0
-        prebuffer_target_samples = int(sample_rate * self.tts_stream_prebuffer_seconds)
+        base_prebuffer_seconds = self.tts_stream_prebuffer_seconds
+        max_prebuffer_seconds = max(base_prebuffer_seconds, self.tts_stream_prebuffer_max_seconds)
+        dynamic_prebuffer = self.tts_stream_prebuffer_dynamic
+        prebuffer_target_samples = int(sample_rate * base_prebuffer_seconds)
         audio_chunk_count = 0
         sample_count = 0
         start_time = time.monotonic()
         next_status_time = self.status_interval_seconds
+
+        def should_start_stream() -> bool:
+            # Decide when enough audio is buffered to begin playback without choppy
+            # underruns. In dynamic mode the cushion grows when generation runs
+            # slower than real time, so longer/slower replies buffer more before
+            # they start, then ride on a matching device latency. Bounded by the
+            # configured base (floor) and max (ceiling) so startup never stalls.
+            produced_seconds = prebuffer_samples / float(sample_rate)
+            if produced_seconds <= 0:
+                return False
+            if not dynamic_prebuffer:
+                return prebuffer_target_samples <= 0 or prebuffer_samples >= prebuffer_target_samples
+            if produced_seconds < base_prebuffer_seconds:
+                return False
+            elapsed = max(1e-6, time.monotonic() - start_time)
+            generation_ratio = produced_seconds / elapsed
+            if generation_ratio >= 1.0:
+                # Generation comfortably keeps up with playback; the base cushion is enough.
+                return True
+            target_seconds = min(max_prebuffer_seconds, base_prebuffer_seconds / max(generation_ratio, 0.1))
+            return produced_seconds >= target_seconds
 
         def start_stream_if_needed() -> None:
             nonlocal stream, prebuffer_chunks, prebuffer_samples
@@ -712,19 +1238,27 @@ class WavCaptureProcessor:
                 print("[Streaming Mara's response...]")
             else:
                 print(f"[Streaming Mara's response chunk {chunk_index}/{segment_count}...]")
+            cushion_seconds = prebuffer_samples / float(sample_rate)
+            if dynamic_prebuffer:
+                # Size the device buffer to the cushion we actually built so a mid-stream
+                # generation stall has that many seconds of audio to coast on.
+                latency = max(0.15, min(max_prebuffer_seconds, max(base_prebuffer_seconds, cushion_seconds)))
+            else:
+                latency = "high"
             stream = sd.OutputStream(
                 samplerate=sample_rate,
                 channels=channels,
                 dtype="float32",
                 device=self.audio_device,
-                latency="high",
+                latency=latency,
             )
             stream.start()
             if prebuffer_samples:
                 self.logger.info(
-                    "Starting %s after buffering %.2fs of audio",
+                    "Starting %s after buffering %.2fs of audio (latency=%s)",
                     descriptor,
-                    prebuffer_samples / float(sample_rate),
+                    cushion_seconds,
+                    f"{latency:.2f}s" if isinstance(latency, float) else latency,
                 )
             for buffered_chunk in prebuffer_chunks:
                 stream.write(buffered_chunk)
@@ -744,7 +1278,7 @@ class WavCaptureProcessor:
                     if stream is None:
                         prebuffer_chunks.append(audio_chunk)
                         prebuffer_samples += len(audio_chunk)
-                        if prebuffer_target_samples <= 0 or prebuffer_samples >= prebuffer_target_samples:
+                        if should_start_stream():
                             start_stream_if_needed()
                     else:
                         stream.write(audio_chunk)
@@ -851,6 +1385,93 @@ class WavCaptureProcessor:
                 audio_queue = next_audio_queue
 
 
+class VoiceInboxWatcher:
+    def __init__(
+        self,
+        inbox_path: Path,
+        processor: WavCaptureProcessor,
+        logger,
+        poll_interval_seconds: float,
+        start_at_end: bool = True,
+        offset_path: Path | None = None,
+    ) -> None:
+        self.inbox_path = inbox_path
+        self.processor = processor
+        self.logger = logger
+        self.poll_interval_seconds = max(0.1, poll_interval_seconds)
+        self.offset_path = offset_path
+        self.offset = self._initial_offset(start_at_end)
+
+    def _initial_offset(self, start_at_end: bool) -> int:
+        if self.offset_path is not None and self.offset_path.exists():
+            try:
+                return max(0, int(self.offset_path.read_text(encoding="utf-8").strip() or "0"))
+            except (OSError, ValueError):
+                return 0
+        if not start_at_end or not self.inbox_path.exists():
+            return 0
+        try:
+            with self.inbox_path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(0, os.SEEK_END)
+                return handle.tell()
+        except OSError:
+            return 0
+
+    def _save_offset(self) -> None:
+        if self.offset_path is None:
+            return
+        try:
+            self.offset_path.parent.mkdir(parents=True, exist_ok=True)
+            self.offset_path.write_text(f"{self.offset}\n", encoding="utf-8")
+        except OSError as exc:
+            self.logger.debug("Could not save voice inbox offset: %s", exc)
+
+    def start(self) -> Thread:
+        thread = Thread(target=self.run_forever, daemon=True)
+        thread.start()
+        return thread
+
+    def poll_once(self) -> int:
+        if not self.inbox_path.exists():
+            return 0
+
+        try:
+            if self.inbox_path.stat().st_size < self.offset:
+                self.offset = 0
+            with self.inbox_path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(self.offset)
+                lines = handle.readlines()
+                self.offset = handle.tell()
+            self._save_offset()
+        except OSError as exc:
+            self.logger.warning("Could not read voice inbox %s: %s", self.inbox_path, exc)
+            return 0
+
+        processed = 0
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                self.logger.warning("Ignoring invalid voice inbox JSON line: %s", exc)
+                continue
+            if self.processor.process_voice_inbox_payload(payload):
+                processed += 1
+        return processed
+
+    def run_forever(self) -> None:
+        self.logger.info(
+            "Watching voice inbox %s every %.1fs",
+            self.inbox_path,
+            self.poll_interval_seconds,
+        )
+        while True:
+            self.poll_once()
+            time.sleep(self.poll_interval_seconds)
+
+
 class PollingCaptureWatcher:
     def __init__(
         self,
@@ -871,6 +1492,7 @@ class PollingCaptureWatcher:
         self.logger.warning("%s", self.reason)
         emit_status(self.logger, "LISTENING", "Watching for Voicebox captures")
         while True:
+            current_paths: set[Path] = set()
             for file_path in sorted(self.capture_dir.glob("*.wav")):
                 try:
                     mtime = file_path.stat().st_mtime_ns
@@ -878,11 +1500,17 @@ class PollingCaptureWatcher:
                     continue
 
                 file_path_normalized = file_path.resolve()
+                current_paths.add(file_path_normalized)
                 if self.known_mtimes.get(file_path_normalized) == mtime:
                     continue
 
                 self.known_mtimes[file_path_normalized] = mtime
                 self.processor.process_path(file_path)
+
+            # Forget files that no longer exist so this cache cannot grow without bound
+            # during long-running sessions in a busy capture directory.
+            for stale_path in [path for path in self.known_mtimes if path not in current_paths]:
+                self.known_mtimes.pop(stale_path, None)
 
             time.sleep(self.poll_interval_seconds)
 
@@ -934,6 +1562,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent-route-state-path", default=str(DEFAULT_AGENT_ROUTE_STATE_PATH))
     parser.add_argument("--openclaw-base-url", default=DEFAULT_OPENCLAW_BASE_URL)
     parser.add_argument("--openclaw-model", default=DEFAULT_OPENCLAW_MODEL)
+    parser.add_argument(
+        "--agent-session-id",
+        default=DEFAULT_AGENT_SESSION_ID,
+        help="Base voice session id. Per-agent ids default to <base>-hermes and <base>-openclaw.",
+    )
+    parser.add_argument(
+        "--hermes-session-id",
+        default=DEFAULT_HERMES_SESSION_ID,
+        help="Stable session id sent to Hermes. Blank derives from --agent-session-id.",
+    )
+    parser.add_argument(
+        "--openclaw-session-id",
+        default=DEFAULT_OPENCLAW_SESSION_ID,
+        help="Stable user/session id sent to OpenClaw. Blank derives from --agent-session-id.",
+    )
+    parser.add_argument(
+        "--agent-session-history-path",
+        default=str(DEFAULT_AGENT_SESSION_HISTORY_PATH),
+        help="JSON file storing persistent per-agent conversation history.",
+    )
+    parser.add_argument(
+        "--agent-session-history-messages",
+        type=int,
+        default=DEFAULT_AGENT_SESSION_HISTORY_MESSAGES,
+        help="Maximum prior user/assistant messages retained per agent session.",
+    )
     parser.add_argument(
         "--openclaw-timeout",
         type=lambda value: parse_optional_timeout(value, DEFAULT_OPENCLAW_TIMEOUT_SECONDS),
@@ -1004,13 +1658,134 @@ def build_parser() -> argparse.ArgumentParser:
         "--tts-stream-prebuffer-seconds",
         type=float,
         default=DEFAULT_TTS_STREAM_PREBUFFER_SECONDS,
-        help="Seconds of streaming audio to buffer before playback to avoid static/choppy underruns.",
+        help="Minimum seconds of streaming audio to buffer before playback to avoid static/choppy underruns.",
+    )
+    parser.add_argument(
+        "--tts-stream-prebuffer-max-seconds",
+        type=float,
+        default=DEFAULT_TTS_STREAM_PREBUFFER_MAX_SECONDS,
+        help="Maximum prebuffer/cushion seconds when dynamic prebuffering grows the buffer for slow generation.",
+    )
+    prebuffer_group = parser.add_mutually_exclusive_group()
+    prebuffer_group.add_argument(
+        "--tts-stream-prebuffer-dynamic",
+        dest="tts_stream_prebuffer_dynamic",
+        action="store_true",
+        default=DEFAULT_TTS_STREAM_PREBUFFER_DYNAMIC,
+        help="Grow the prebuffer/cushion automatically based on measured generation speed.",
+    )
+    prebuffer_group.add_argument(
+        "--no-tts-stream-prebuffer-dynamic",
+        dest="tts_stream_prebuffer_dynamic",
+        action="store_false",
+        help="Use a fixed prebuffer of --tts-stream-prebuffer-seconds instead of adapting it.",
     )
     parser.add_argument(
         "--process-existing-seconds",
         type=float,
         default=DEFAULT_PROCESS_EXISTING_SECONDS,
         help="On startup, process existing Voicebox WAV files modified within this many seconds. Use 0 to disable.",
+    )
+    ack_group = parser.add_mutually_exclusive_group()
+    ack_group.add_argument(
+        "--async-ack-agent",
+        dest="async_ack_agent",
+        action="store_true",
+        default=DEFAULT_ASYNC_ACK_AGENT,
+        help="Speak a natural, agent-generated acknowledgement.",
+    )
+    ack_group.add_argument(
+        "--no-async-ack-agent",
+        dest="async_ack_agent",
+        action="store_false",
+        help="Use preset acknowledgement phrases instead of an agent-generated one.",
+    )
+    parser.add_argument(
+        "--async-ack-grace-seconds",
+        type=float,
+        default=DEFAULT_ASYNC_ACK_GRACE_SECONDS,
+        help="Seconds to wait for the real answer before speaking an acknowledgement. If the answer arrives first, no acknowledgement is spoken. 0 always speaks one immediately.",
+    )
+    parser.add_argument(
+        "--async-ack-text",
+        default=DEFAULT_ASYNC_ACK_TEXT,
+        help="Single acknowledgement phrase used when no --async-ack-phrases are set, and as the final fallback.",
+    )
+    parser.add_argument(
+        "--async-ack-phrases",
+        default=DEFAULT_ASYNC_ACK_PHRASES,
+        help="Newline-separated acknowledgement phrases chosen at random when the agent acknowledgement is off (or as fallback).",
+    )
+    parser.add_argument(
+        "--async-followup-initial-delay-seconds",
+        type=float,
+        default=DEFAULT_ASYNC_FOLLOWUP_INITIAL_DELAY_SECONDS,
+        help="Seconds to wait before the first automatic follow-up check after a deferred async reply.",
+    )
+    parser.add_argument(
+        "--async-followup-poll-seconds",
+        type=float,
+        default=DEFAULT_ASYNC_FOLLOWUP_POLL_SECONDS,
+        help="Seconds between automatic background-result follow-up checks.",
+    )
+    parser.add_argument(
+        "--async-followup-max-attempts",
+        type=int,
+        default=DEFAULT_ASYNC_FOLLOWUP_MAX_ATTEMPTS,
+        help="Maximum automatic follow-up checks for a deferred async reply.",
+    )
+    parser.add_argument(
+        "--voice-inbox-path",
+        default=str(DEFAULT_VOICE_INBOX_PATH),
+        help="JSONL file polled for out-of-band voice replies. Each line should contain text or message.",
+    )
+    parser.add_argument(
+        "--voice-inbox-poll-seconds",
+        type=float,
+        default=DEFAULT_VOICE_INBOX_POLL_SECONDS,
+        help="Seconds between voice inbox polls. Use 0 to disable voice inbox polling.",
+    )
+    async_group = parser.add_mutually_exclusive_group()
+    async_group.add_argument(
+        "--async-agent-replies",
+        dest="async_agent_replies",
+        action="store_true",
+        default=DEFAULT_ASYNC_AGENT_REPLIES,
+        help="Speak a short acknowledgement immediately, then finish the agent request in the background.",
+    )
+    async_group.add_argument(
+        "--no-async-agent-replies",
+        dest="async_agent_replies",
+        action="store_false",
+        help="Wait for the agent reply before speaking, preserving the original synchronous flow.",
+    )
+    followup_group = parser.add_mutually_exclusive_group()
+    followup_group.add_argument(
+        "--async-followup",
+        dest="async_followup_enabled",
+        action="store_true",
+        default=DEFAULT_ASYNC_FOLLOWUP_ENABLED,
+        help="Automatically poll the same agent session if the async reply says background work is still running.",
+    )
+    followup_group.add_argument(
+        "--no-async-followup",
+        dest="async_followup_enabled",
+        action="store_false",
+        help="Do not automatically poll for final background results.",
+    )
+    session_group = parser.add_mutually_exclusive_group()
+    session_group.add_argument(
+        "--agent-session-persistence",
+        dest="agent_session_persistence",
+        action="store_true",
+        default=DEFAULT_AGENT_SESSION_PERSISTENCE,
+        help="Persist and reuse per-agent conversation history across turns.",
+    )
+    session_group.add_argument(
+        "--no-agent-session-persistence",
+        dest="agent_session_persistence",
+        action="store_false",
+        help="Disable persistent per-agent conversation history.",
     )
     streaming_group = parser.add_mutually_exclusive_group()
     streaming_group.add_argument(
@@ -1055,6 +1830,15 @@ def main() -> int:
     logger.info("Hermes command: %s", args.hermes_command)
     logger.info("Default agent route: %s", args.active_agent)
     logger.info("Agent route state path: %s", args.agent_route_state_path)
+    logger.info(
+        "Agent session: base=%s hermes=%s openclaw=%s persistence=%s history=%s messages=%d",
+        args.agent_session_id,
+        args.hermes_session_id or f"{args.agent_session_id}-hermes",
+        args.openclaw_session_id or f"{args.agent_session_id}-openclaw",
+        "enabled" if args.agent_session_persistence else "disabled",
+        args.agent_session_history_path,
+        args.agent_session_history_messages,
+    )
     logger.info("OpenClaw API: %s (model=%s)", redact_url(args.openclaw_base_url), args.openclaw_model)
     logger.info(
         "Timeouts: transcribe=%s ssh=%s openclaw=%s tts=%s connect=%s status_interval=%.1fs",
@@ -1068,9 +1852,37 @@ def main() -> int:
     logger.info("Spoken reply character limit: %s", args.spoken_reply_char_limit or "disabled")
     logger.info("TTS playback chunk character limit: %s", args.tts_chunk_char_limit or "disabled")
     logger.info("TTS streaming chunk character limit: %s", args.tts_stream_chunk_char_limit)
-    logger.info("TTS streaming prebuffer: %.2fs", args.tts_stream_prebuffer_seconds)
+    logger.info(
+        "TTS streaming prebuffer: base=%.2fs max=%.2fs dynamic=%s",
+        args.tts_stream_prebuffer_seconds,
+        args.tts_stream_prebuffer_max_seconds,
+        "enabled" if args.tts_stream_prebuffer_dynamic else "disabled",
+    )
     logger.info("TTS streaming: %s", "enabled" if args.tts_streaming else "disabled")
     logger.info("Process existing captures window: %.1fs", args.process_existing_seconds)
+    ack_phrase_count = len(WavCaptureProcessor._parse_ack_phrases(args.async_ack_phrases))
+    logger.info(
+        "Async agent replies: %s (ack: %s, preset phrases: %d, grace: %.1fs)",
+        "enabled" if args.async_agent_replies else "disabled",
+        "agent-generated" if args.async_ack_agent else "preset",
+        ack_phrase_count,
+        args.async_ack_grace_seconds,
+    )
+    logger.info(
+        "Async follow-up: %s (initial_delay=%.1fs poll=%.1fs max_attempts=%d)",
+        "enabled" if args.async_followup_enabled else "disabled",
+        args.async_followup_initial_delay_seconds,
+        args.async_followup_poll_seconds,
+        args.async_followup_max_attempts,
+    )
+    if args.voice_inbox_poll_seconds > 0 and args.voice_inbox_path:
+        logger.info(
+            "Voice inbox: %s (poll %.1fs)",
+            args.voice_inbox_path,
+            args.voice_inbox_poll_seconds,
+        )
+    else:
+        logger.info("Voice inbox: disabled")
     if args.audio_device:
         logger.info("Audio device: %s", args.audio_device)
     try:
@@ -1109,6 +1921,23 @@ def main() -> int:
         tts_streaming=args.tts_streaming,
         tts_stream_chunk_char_limit=args.tts_stream_chunk_char_limit,
         tts_stream_prebuffer_seconds=args.tts_stream_prebuffer_seconds,
+        tts_stream_prebuffer_dynamic=args.tts_stream_prebuffer_dynamic,
+        tts_stream_prebuffer_max_seconds=args.tts_stream_prebuffer_max_seconds,
+        async_agent_replies=args.async_agent_replies,
+        async_ack_agent=args.async_ack_agent,
+        async_ack_grace_seconds=args.async_ack_grace_seconds,
+        async_ack_text=args.async_ack_text,
+        async_ack_phrases=args.async_ack_phrases,
+        async_followup_enabled=args.async_followup_enabled,
+        async_followup_initial_delay_seconds=args.async_followup_initial_delay_seconds,
+        async_followup_poll_seconds=args.async_followup_poll_seconds,
+        async_followup_max_attempts=args.async_followup_max_attempts,
+        agent_session_id=args.agent_session_id,
+        hermes_session_id=args.hermes_session_id,
+        openclaw_session_id=args.openclaw_session_id,
+        agent_session_history_path=Path(args.agent_session_history_path),
+        agent_session_history_messages=args.agent_session_history_messages,
+        agent_session_persistence=args.agent_session_persistence,
     )
 
     existing_captures = find_existing_capture_files(
@@ -1129,6 +1958,16 @@ def main() -> int:
         for file_path in existing_captures:
             processor.process_path(file_path)
         emit_status(logger, "LISTENING", "Ready")
+
+    if args.voice_inbox_poll_seconds > 0 and args.voice_inbox_path:
+        voice_inbox_path = Path(args.voice_inbox_path)
+        VoiceInboxWatcher(
+            voice_inbox_path,
+            processor,
+            logger,
+            args.voice_inbox_poll_seconds,
+            offset_path=voice_inbox_path.with_name(f"{voice_inbox_path.name}.offset"),
+        ).start()
 
     if WATCHDOG_AVAILABLE and not args.force_polling:
         observer = Observer()

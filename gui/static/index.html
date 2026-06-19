@@ -4,298 +4,282 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <title>Mara Voice Console</title>
+  <title>Mara · Mission Control</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #020403;
-      --panel: #080c0b;
-      --panel-soft: #0e1513;
-      --panel-elevated: #111a17;
-      --input: #030605;
-      --line: #22322d;
-      --line-strong: #38564c;
-      --text: #f0fbf7;
-      --muted: #93aaa4;
+      --bg: #030605;
+      --bg-grid: rgba(52, 211, 153, 0.045);
+      --panel: #070d0b;
+      --panel-soft: #0b1311;
+      --panel-elevated: #0f1916;
+      --input: #040908;
+      --line: #1c2c27;
+      --line-strong: #345147;
+      --text: #eafff7;
+      --muted: #8aa49d;
+      --muted-dim: #5f756e;
       --accent: #34d399;
       --accent-strong: #8ff0c6;
       --warn: #f6c453;
       --bad: #ff7a90;
       --good: #6ee7a8;
-      --shadow: 0 18px 50px rgba(0, 0, 0, 0.46);
+      --info: #7dd3fc;
+      --violet: #c4b5fd;
+      --hermes: #8ff0c6;
+      --claw: #67e8f9;
+      --user: #f6c453;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+      --mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, ui-monospace, monospace;
     }
     * { box-sizing: border-box; }
-    ::selection {
-      background: rgba(52, 211, 153, 0.32);
-      color: var(--text);
-    }
+    ::selection { background: rgba(52, 211, 153, 0.32); color: var(--text); }
     body {
       margin: 0;
-      background: var(--bg);
+      background:
+        linear-gradient(var(--bg-grid) 1px, transparent 1px) 0 0 / 100% 34px,
+        linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px) 0 0 / 34px 100%,
+        radial-gradient(1200px 600px at 80% -10%, rgba(52, 211, 153, 0.07), transparent 60%),
+        var(--bg);
       color: var(--text);
       font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       font-size: 14px;
       line-height: 1.45;
     }
+    .mono { font-family: var(--mono); }
     header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
-      padding: 14px 18px;
+      padding: 12px 18px;
       border-bottom: 1px solid var(--line);
-      background: var(--panel);
+      background: linear-gradient(180deg, rgba(11, 19, 17, 0.95), rgba(7, 13, 11, 0.92));
+      backdrop-filter: blur(6px);
       position: sticky;
       top: 0;
       z-index: 10;
     }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .led {
+      width: 11px; height: 11px; border-radius: 50%;
+      background: var(--muted-dim);
+      box-shadow: 0 0 0 3px rgba(255,255,255,0.02);
+      flex: none;
+    }
+    .led.good { background: var(--good); box-shadow: 0 0 10px 1px rgba(110,231,168,0.7); }
+    .led.warn { background: var(--warn); box-shadow: 0 0 10px 1px rgba(246,196,83,0.6); }
+    .led.bad { background: var(--bad); box-shadow: 0 0 10px 1px rgba(255,122,144,0.6); animation: pulse 1.4s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
     h1, h2, h3, p { margin: 0; }
     h1 {
-      font-size: 18px;
-      font-weight: 650;
-      letter-spacing: 0;
+      font-size: 16px; font-weight: 700; letter-spacing: 2px;
+      text-transform: uppercase; font-family: var(--mono);
     }
+    h1 .dim { color: var(--muted-dim); }
     h2 {
-      font-size: 14px;
-      font-weight: 650;
-      color: var(--muted);
-      text-transform: uppercase;
+      font-size: 12px; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 1.5px; font-family: var(--mono);
     }
     main {
       display: grid;
-      grid-template-columns: minmax(0, 1.25fr) minmax(340px, 0.75fr);
-      gap: 14px;
-      padding: 14px;
-      max-width: 1480px;
-      margin: 0 auto;
+      grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.7fr);
+      gap: 14px; padding: 14px; max-width: 1560px; margin: 0 auto; align-items: start;
     }
     section {
+      position: relative;
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: 6px;
       box-shadow: var(--shadow);
       overflow: hidden;
     }
+    section::before, section::after {
+      content: ""; position: absolute; width: 9px; height: 9px; pointer-events: none; z-index: 2;
+      border-color: var(--line-strong); border-style: solid; border-width: 0;
+    }
+    section::before { top: 0; left: 0; border-top-width: 1px; border-left-width: 1px; }
+    section::after { bottom: 0; right: 0; border-bottom-width: 1px; border-right-width: 1px; }
     .section-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--line);
-      background: var(--panel-soft);
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 11px 14px; border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, var(--panel-soft), transparent);
     }
     .section-body { padding: 14px; }
-    .stack { display: grid; gap: 14px; }
-    .status-strip {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 10px;
-    }
+    .stack { display: grid; gap: 14px; align-content: start; }
+
+    .status-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
     .metric {
-      min-height: 82px;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel-elevated);
+      min-height: 78px; padding: 11px 12px;
+      border: 1px solid var(--line); border-radius: 6px;
+      background: linear-gradient(180deg, var(--panel-elevated), rgba(0,0,0,0.18));
+      position: relative;
     }
     .metric .label {
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      margin-bottom: 6px;
+      color: var(--muted); font-size: 11px; letter-spacing: 1px;
+      text-transform: uppercase; margin-bottom: 6px; font-family: var(--mono);
     }
-    .metric .value {
-      font-size: 18px;
-      font-weight: 650;
-      overflow-wrap: anywhere;
-    }
+    .metric .value { font-size: 18px; font-weight: 650; overflow-wrap: anywhere; }
+    .metric .value.num { font-family: var(--mono); font-weight: 700; }
+    .metric .value.num small { color: var(--muted-dim); font-size: 12px; font-weight: 500; }
+    .metric.telemetry .value { color: var(--accent-strong); }
+
     .pill {
-      display: inline-flex;
-      align-items: center;
-      min-height: 28px;
-      padding: 0 10px;
-      border-radius: 999px;
-      background: var(--panel-soft);
-      color: var(--muted);
-      border: 1px solid var(--line);
-      white-space: nowrap;
+      display: inline-flex; align-items: center; min-height: 26px; padding: 0 11px;
+      border-radius: 999px; background: var(--panel-soft); color: var(--muted);
+      border: 1px solid var(--line); white-space: nowrap; font-family: var(--mono);
+      font-size: 12px; letter-spacing: 0.5px;
     }
     .pill.good { color: var(--good); border-color: #235d42; background: #082d1f; }
     .pill.bad { color: var(--bad); border-color: #6b2632; background: #341016; }
     .pill.warn { color: var(--warn); border-color: #6b4c18; background: #302309; }
-    .turns {
-      display: grid;
-      gap: 10px;
+
+    .agent-log-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .chat-panel {
+      min-height: 360px; display: grid; grid-template-rows: auto minmax(0, 1fr);
+      border: 1px solid var(--line); border-radius: 6px; background: var(--panel-elevated); overflow: hidden;
     }
-    .turn {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      background: var(--panel-elevated);
-      min-height: 94px;
+    .chat-panel.hermes { border-color: rgba(143, 240, 198, 0.32); box-shadow: inset 0 0 30px rgba(143,240,198,0.04); }
+    .chat-panel.openclaw { border-color: rgba(103, 232, 249, 0.32); box-shadow: inset 0 0 30px rgba(103,232,249,0.04); }
+    .chat-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 9px 12px; border-bottom: 1px solid var(--line); background: rgba(255, 255, 255, 0.02);
     }
-    .turn h3 {
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      margin-bottom: 8px;
+    .chat-head h3 { margin: 0; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; font-family: var(--mono); }
+    .chat-panel.hermes .chat-head h3 { color: var(--hermes); }
+    .chat-panel.openclaw .chat-head h3 { color: var(--claw); }
+    .pill.mini { min-height: 21px; padding: 0 8px; font-size: 11px; }
+    .chat-log {
+      min-height: 300px; max-height: 480px; overflow: auto; padding: 10px 12px;
+      display: grid; align-content: start; gap: 8px;
     }
-    .turn pre {
-      margin: 0;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      font-family: inherit;
+    .chat-line {
+      display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px;
+      padding: 8px; border-radius: 6px; background: rgba(255,255,255,0.012);
+      border-left: 2px solid transparent;
     }
-    .events {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
+    .chat-line.user { border-left-color: var(--user); }
+    .chat-line.mara.hermes { border-left-color: var(--hermes); }
+    .chat-line.mara.openclaw { border-left-color: var(--claw); }
+    .speaker { display: grid; gap: 3px; align-content: start; min-width: 0; font-size: 11px; color: var(--muted); text-transform: uppercase; font-family: var(--mono); }
+    .speaker-name { font-weight: 700; overflow-wrap: anywhere; letter-spacing: 0.5px; }
+    .chat-line.user .speaker-name { color: var(--user); }
+    .chat-line.mara.hermes .speaker-name { color: var(--hermes); }
+    .chat-line.mara.openclaw .speaker-name { color: var(--claw); }
+    .chat-time { color: var(--muted-dim); font-size: 10px; text-transform: none; }
+    .chat-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .chat-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+    .tag {
+      display: inline-flex; align-items: center; min-height: 19px; padding: 0 7px;
+      border: 1px solid var(--line); border-radius: 4px; color: var(--muted);
+      font-size: 10px; letter-spacing: 0.5px; background: rgba(0, 0, 0, 0.2); font-family: var(--mono); text-transform: uppercase;
     }
-    .events th, .events td {
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--line);
-      vertical-align: top;
-      text-align: left;
+    .tag.async { color: var(--violet); border-color: rgba(196, 181, 253, 0.36); }
+    .tag.source { color: var(--info); border-color: rgba(125, 211, 252, 0.32); }
+    .tag.timing { color: var(--accent); border-color: rgba(52, 211, 153, 0.34); }
+    .tag.ack { color: var(--warn); border-color: rgba(246, 196, 83, 0.32); }
+    .empty { margin: 0; color: var(--muted-dim); font-size: 13px; font-family: var(--mono); }
+
+    .kw { font-weight: 700; }
+    .kw-good { color: var(--good); } .kw-warn { color: var(--warn); } .kw-bad { color: var(--bad); }
+    .kw-talk { color: var(--info); } .kw-hermes { color: var(--hermes); } .kw-claw { color: var(--claw); } .kw-mara { color: var(--violet); }
+
+    .status-chip {
+      display: inline-flex; align-items: center; min-height: 21px; padding: 0 8px;
+      border-radius: 4px; border: 1px solid var(--line); background: var(--panel-soft);
+      font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; white-space: nowrap; font-family: var(--mono);
     }
-    .events th {
-      font-size: 12px;
-      color: var(--muted);
-      text-transform: uppercase;
-      background: var(--panel-soft);
-    }
-    .events td {
-      overflow-wrap: anywhere;
-    }
-    .events .time { width: 190px; }
-    .events .status { width: 118px; }
-    form {
-      display: grid;
-      gap: 12px;
-    }
-    .form-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-    }
-    label {
-      display: grid;
-      gap: 6px;
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-    }
-    input, select, textarea, button {
-      font: inherit;
-    }
+    .status-chip.good { color: var(--good); border-color: #235d42; background: #082d1f; }
+    .status-chip.bad { color: var(--bad); border-color: #6b2632; background: #341016; }
+    .status-chip.warn { color: var(--warn); border-color: #6b4c18; background: #302309; }
+    .status-chip.talk { color: var(--info); border-color: rgba(125, 211, 252, 0.32); background: #062433; }
+    .status-chip.user { color: var(--user); border-color: rgba(246, 196, 83, 0.32); background: #2f2208; }
+    .status-chip.mara { color: var(--violet); border-color: rgba(196, 181, 253, 0.32); background: #211932; }
+
+    tr.event-bad td { background: rgba(255, 122, 144, 0.06); }
+    tr.event-warn td { background: rgba(246, 196, 83, 0.045); }
+    tr.event-good td { background: rgba(110, 231, 168, 0.035); }
+    tr.event-talk td { background: rgba(125, 211, 252, 0.04); }
+    .events { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .events th, .events td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; }
+    .events th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; background: var(--panel-soft); font-family: var(--mono); }
+    .events td { overflow-wrap: anywhere; }
+    .events td.time { color: var(--muted-dim); font-family: var(--mono); font-size: 12px; }
+    .events .time { width: 184px; }
+    .events .status { width: 116px; }
+    .events .agent { width: 92px; }
+    .turn { border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: var(--panel-elevated); }
+    .turn h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; margin-bottom: 8px; font-family: var(--mono); }
+    .turn pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; }
+
+    form { display: grid; gap: 12px; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; font-family: var(--mono); }
+    input, select, textarea, button { font: inherit; }
     input, select, textarea {
-      width: 100%;
-      min-height: 36px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 7px 9px;
-      background: var(--input);
-      color: var(--text);
+      width: 100%; min-height: 36px; border: 1px solid var(--line); border-radius: 5px;
+      padding: 7px 9px; background: var(--input); color: var(--text); font-family: var(--mono); font-size: 13px;
     }
     input:focus, select:focus, textarea:focus, button:focus-visible {
-      outline: 2px solid rgba(52, 211, 153, 0.7);
-      outline-offset: 2px;
-      border-color: var(--line-strong);
+      outline: 2px solid rgba(52, 211, 153, 0.65); outline-offset: 2px; border-color: var(--line-strong);
     }
-    textarea {
-      min-height: 68px;
-      resize: vertical;
-      text-transform: none;
-    }
+    textarea { min-height: 68px; resize: vertical; text-transform: none; }
     .check-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 9px 10px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel-elevated);
-      color: var(--text);
-      text-transform: none;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--panel-elevated); color: var(--text); text-transform: none; font-family: inherit;
     }
-    .check-row input {
-      width: 20px;
-      min-height: 20px;
-      accent-color: var(--accent);
-    }
-    .actions {
-      display: flex;
-      gap: 10px;
-      justify-content: flex-end;
-      align-items: center;
-      flex-wrap: wrap;
-    }
+    .check-row input { width: 20px; min-height: 20px; accent-color: var(--accent); }
+    .actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
     button {
-      min-height: 36px;
-      border: 1px solid var(--accent);
-      background: var(--accent);
-      color: #02120c;
-      border-radius: 6px;
-      padding: 0 14px;
-      cursor: pointer;
+      min-height: 36px; border: 1px solid var(--accent); background: var(--accent);
+      color: #02120c; border-radius: 5px; padding: 0 14px; cursor: pointer; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.5px; font-size: 12px; font-family: var(--mono);
     }
-    button.secondary {
-      color: var(--accent-strong);
-      background: var(--input);
-    }
-    button:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-    .note {
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .help {
-      color: var(--muted);
-      font-size: 11px;
-      line-height: 1.35;
-      text-transform: none;
-    }
-    .check-row > span {
-      display: grid;
-      gap: 3px;
-    }
+    button.secondary { color: var(--accent-strong); background: var(--input); }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .note { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+    .help { color: var(--muted-dim); font-size: 11px; line-height: 1.35; text-transform: none; font-family: "Segoe UI", system-ui, sans-serif; letter-spacing: 0; }
+    .check-row > span { display: grid; gap: 3px; }
+    .check-row > span > span:first-child { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
     .route-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
-      gap: 10px;
-      align-items: end;
-      padding: 10px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel-elevated);
+      display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: end;
+      padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-elevated);
     }
     .wide { grid-column: 1 / -1; }
     .error-text { color: var(--bad); overflow-wrap: anywhere; }
-    @media (max-width: 1040px) {
+    @media (max-width: 1100px) {
       main { grid-template-columns: 1fr; }
       .status-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .agent-log-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 640px) {
       header { align-items: flex-start; flex-direction: column; }
       main { padding: 10px; }
       .status-strip, .form-grid { grid-template-columns: 1fr; }
       .route-row { grid-template-columns: 1fr; }
+      .chat-line { grid-template-columns: 1fr; }
+      .chat-log { max-height: 380px; }
       .events .time { width: 120px; }
       .events .status { width: 96px; }
+      .events .agent { width: 76px; }
     }
   </style>
 </head>
 <body>
   <header>
-    <div>
-      <h1>Mara Voice Console</h1>
-      <p class="note" id="subtitle">Loading runtime state...</p>
+    <div class="brand">
+      <span class="led" id="led"></span>
+      <div>
+        <h1>MARA <span class="dim">// MISSION CONTROL</span></h1>
+        <p class="note" id="subtitle">Loading runtime state...</p>
+      </div>
     </div>
     <div class="actions">
+      <span class="pill" id="updated">No updates</span>
+      <span class="pill" id="pipeline">Pipeline ?</span>
       <span class="pill" id="connection">Connecting</span>
+      <button class="secondary" id="startPipeline" type="button" title="Run start_mara to bring up the TTS server and voice listener.">Start Pipeline</button>
       <button class="secondary" id="refresh" type="button">Refresh</button>
     </div>
   </header>
@@ -304,8 +288,8 @@
     <div class="stack">
       <section>
         <div class="section-head">
-          <h2>Runtime</h2>
-          <span class="pill" id="updated">No updates</span>
+          <h2>Telemetry</h2>
+          <span class="pill" id="eventCount">0 events</span>
         </div>
         <div class="section-body stack">
           <div class="status-strip">
@@ -314,8 +298,8 @@
               <div class="value" id="currentStatus">UNKNOWN</div>
             </div>
             <div class="metric">
-              <div class="label">Current Action</div>
-              <div class="value" id="currentMessage">-</div>
+              <div class="label">Active Agent</div>
+              <div class="value" id="agentStatus">Hermes</div>
             </div>
             <div class="metric">
               <div class="label">TTS Server</div>
@@ -325,22 +309,58 @@
               <div class="label">Streaming</div>
               <div class="value" id="streamStatus">Unknown</div>
             </div>
-            <div class="metric">
-              <div class="label">Active Agent</div>
-              <div class="value" id="agentStatus">Hermes</div>
+          </div>
+          <div class="status-strip">
+            <div class="metric telemetry">
+              <div class="label">Last Dictation</div>
+              <div class="value num" id="metricDictation">--</div>
+            </div>
+            <div class="metric telemetry">
+              <div class="label">Last Generation</div>
+              <div class="value num" id="metricGeneration">--</div>
+            </div>
+            <div class="metric telemetry">
+              <div class="label">Last Speech</div>
+              <div class="value num" id="metricSpeech">--</div>
+            </div>
+            <div class="metric telemetry">
+              <div class="label">Throughput</div>
+              <div class="value num" id="metricThroughput">--</div>
             </div>
           </div>
+          <div class="metric" style="min-height:auto">
+            <div class="label">Current Action</div>
+            <div class="value" id="currentMessage" style="font-size:14px">-</div>
+          </div>
+        </div>
+      </section>
 
-          <div class="turns">
-            <div class="turn">
-              <h3>You</h3>
-              <pre id="lastUser">No transcription yet.</pre>
+      <section>
+        <div class="section-head">
+          <h2>Comms</h2>
+          <span class="pill mini">conversation only</span>
+        </div>
+        <div class="section-body">
+          <div class="agent-log-grid">
+            <div class="chat-panel hermes">
+              <div class="chat-head">
+                <h3>Hermes</h3>
+                <span class="pill mini" id="hermesCount">0 entries</span>
+              </div>
+              <div class="chat-log" id="hermesLog">
+                <p class="empty">No Hermes conversation yet.</p>
+              </div>
             </div>
-            <div class="turn">
-              <h3>Mara</h3>
-              <pre id="lastMara">No reply yet.</pre>
+            <div class="chat-panel openclaw">
+              <div class="chat-head">
+                <h3>Claw</h3>
+                <span class="pill mini" id="openclawCount">0 entries</span>
+              </div>
+              <div class="chat-log" id="openclawLog">
+                <p class="empty">No Claw conversation yet.</p>
+              </div>
             </div>
-            <div class="turn" id="errorPanel" hidden>
+            <div class="turn wide" id="errorPanel" hidden>
               <h3>Last Error</h3>
               <pre class="error-text" id="lastError"></pre>
             </div>
@@ -351,7 +371,7 @@
       <section>
         <div class="section-head">
           <h2>Event Log</h2>
-          <span class="pill" id="eventCount">0 events</span>
+          <span class="pill mini">system / status / timing</span>
         </div>
         <div class="section-body" style="padding:0">
           <table class="events">
@@ -359,6 +379,7 @@
               <tr>
                 <th class="time">Time</th>
                 <th class="status">Status</th>
+                <th class="agent">Agent</th>
                 <th>Message</th>
               </tr>
             </thead>
@@ -397,12 +418,51 @@
             </label>
             <label class="check-row wide">
               <span>
+                <span>Dynamic streaming prebuffer</span>
+                <span class="help">Example: on grows the buffer automatically when generation is slow so long/short replies both stay clear. Off uses a fixed prebuffer.</span>
+              </span>
+              <input id="tts_stream_prebuffer_dynamic" name="tts_stream_prebuffer_dynamic" type="checkbox" title="Adapt prebuffer/cushion to measured generation speed.">
+            </label>
+            <label class="check-row wide">
+              <span>
+                <span>Async agent replies</span>
+                <span class="help">Example: speak a quick acknowledgement now, then play the final agent answer when it finishes.</span>
+              </span>
+              <input id="async_agent_replies" name="async_agent_replies" type="checkbox" title="Run agent requests in the background after a short spoken acknowledgement.">
+            </label>
+            <label class="check-row wide">
+              <span>
+                <span>Agent-generated acknowledgement</span>
+                <span class="help">Off (recommended): instant random preset phrase (below) that fills the wait. On: a natural agent-written line, but it needs its own agent round-trip so it arrives about when the answer does.</span>
+              </span>
+              <input id="async_ack_agent" name="async_ack_agent" type="checkbox" title="On = natural agent-generated acknowledgement; off = random preset phrase.">
+            </label>
+            <label class="check-row wide">
+              <span>
+                <span>Async follow-up polling</span>
+                <span class="help">Example: if the agent says background work is still running, keep checking the same session and speak the result automatically.</span>
+              </span>
+              <input id="async_followup_enabled" name="async_followup_enabled" type="checkbox" title="Automatically poll for a final background result after deferred async replies.">
+            </label>
+            <label class="check-row wide">
+              <span>
+                <span>Persistent agent session</span>
+                <span class="help">Example: reuse the same Voice Session history for Hermes/OpenClaw instead of treating each prompt as isolated.</span>
+              </span>
+              <input id="agent_session_persistence" name="agent_session_persistence" type="checkbox" title="Persist and reuse per-agent conversation history.">
+            </label>
+            <label class="check-row wide">
+              <span>
                 <span>Regenerate voice reference on next start</span>
                 <span class="help">Example: enable only after changing the reference transcript/path, then turn it back off.</span>
               </span>
               <input id="regenerate_voice_reference" name="regenerate_voice_reference" type="checkbox" title="Rebuild the persistent reference WAV on the next TTS server start.">
             </label>
             <div class="form-grid">
+              <label>Ack grace seconds
+                <input id="async_ack_grace_seconds" name="async_ack_grace_seconds" type="number" min="0" max="120" step="0.5" required title="Wait this long for the real answer before speaking an acknowledgement.">
+                <span class="help">If the answer arrives within this window, no acknowledgement is spoken (avoids a double reply on quick prompts). 0 always speaks one.</span>
+              </label>
               <label>Spoken reply characters
                 <input id="spoken_reply_char_limit" name="spoken_reply_char_limit" type="number" min="0" max="12000" required title="Maximum text sent to speech. 0 speaks the full reply.">
                 <span class="help">Example: 900 is concise; 1300 reads more; 0 reads everything.</span>
@@ -413,15 +473,19 @@
               </label>
               <label>Streaming chunk characters
                 <input id="tts_stream_chunk_char_limit" name="tts_stream_chunk_char_limit" type="number" min="40" max="12000" required title="Chunk size used before calling the true streaming endpoint.">
-                <span class="help">Example: 180-260 starts long replies faster; 0 is not allowed for true streaming.</span>
+                <span class="help">Example: 1200 avoids short-reply chunk gaps; lower values split very long replies sooner.</span>
               </label>
-              <label>Streaming prebuffer seconds
-                <input id="tts_stream_prebuffer_seconds" name="tts_stream_prebuffer_seconds" type="number" min="0" max="30" step="0.5" required title="Audio buffered before streaming playback starts. Higher reduces static/choppy underruns.">
-                <span class="help">Example: 8 is safer; 2 starts faster but may chop if generation is slower than playback.</span>
+              <label>Prebuffer seconds (min)
+                <input id="tts_stream_prebuffer_seconds" name="tts_stream_prebuffer_seconds" type="number" min="0" max="30" step="0.5" required title="Minimum audio buffered before streaming playback starts.">
+                <span class="help">Example: 1 starts quickly. With dynamic prebuffer this is the floor.</span>
+              </label>
+              <label>Prebuffer seconds (max)
+                <input id="tts_stream_prebuffer_max_seconds" name="tts_stream_prebuffer_max_seconds" type="number" min="0" max="30" step="0.5" required title="Maximum prebuffer/cushion when dynamic prebuffering grows the buffer for slow generation.">
+                <span class="help">Example: 6 lets slow generations build a bigger cushion before playback.</span>
               </label>
               <label>TTS inference steps
                 <input id="tts_inference_timesteps" name="tts_inference_timesteps" type="number" min="1" max="50" required title="Lower is faster, higher can sound cleaner.">
-                <span class="help">Example: 6 is faster; 8 is current default; 10 is slower/older default.</span>
+                <span class="help">Lower = faster generation, slightly lower quality. 6 is default; try 4 for max speed, 8-10 for best quality.</span>
               </label>
               <label>TTS timeout seconds
                 <input id="tts_timeout_seconds" name="tts_timeout_seconds" type="number" min="0" max="3600" step="0.5" required title="How long to wait for each local TTS request.">
@@ -439,9 +503,57 @@
                 <input id="status_interval_seconds" name="status_interval_seconds" type="number" min="0" max="300" step="0.5" required title="How often the terminal prints still-working updates.">
                 <span class="help">Example: 10 gives steady progress messages; 0 disables them.</span>
               </label>
+              <label>Voice inbox poll seconds
+                <input id="voice_inbox_poll_seconds" name="voice_inbox_poll_seconds" type="number" min="0" max="300" step="0.5" required title="How often to check the JSONL voice inbox. 0 disables it.">
+                <span class="help">Example: 5 checks for out-of-band replies without needing WebSocket push.</span>
+              </label>
+              <label>Follow-up initial delay
+                <input id="async_followup_initial_delay_seconds" name="async_followup_initial_delay_seconds" type="number" min="0" max="300" step="0.5" required title="Seconds before the first automatic background-result check.">
+                <span class="help">Example: 3 gives the remote task a moment before the first check.</span>
+              </label>
+              <label>Follow-up poll seconds
+                <input id="async_followup_poll_seconds" name="async_followup_poll_seconds" type="number" min="1" max="600" step="0.5" required title="Seconds between automatic background-result checks.">
+                <span class="help">Example: 8 keeps checking without needing another voice prompt.</span>
+              </label>
+              <label>Follow-up max checks
+                <input id="async_followup_max_attempts" name="async_followup_max_attempts" type="number" min="0" max="1000" required title="Maximum checks before Mara speaks a still-waiting update.">
+                <span class="help">Example: 60 checks for up to about 8 minutes at the default interval.</span>
+              </label>
+              <label>Session history messages
+                <input id="agent_session_history_messages" name="agent_session_history_messages" type="number" min="0" max="200" required title="Maximum prior user/assistant messages retained per agent session.">
+                <span class="help">Example: 20 keeps roughly the last 10 turns per agent.</span>
+              </label>
               <label>OpenClaw timeout seconds
                 <input id="openclaw_timeout_seconds" name="openclaw_timeout_seconds" type="number" min="0" max="3600" step="0.5" required title="How long to wait for the OpenClaw HTTP response.">
                 <span class="help">Example: 600 lets OpenClaw work for longer tasks; 0 disables the timeout.</span>
+              </label>
+              <label class="wide">Acknowledgement phrases (one per line)
+                <textarea id="async_ack_phrases" name="async_ack_phrases" placeholder="On it &mdash; give me a sec.&#10;Got it, working on that now.&#10;Sure, let me look into that." title="When agent-generated acknowledgement is off, one of these is spoken at random."></textarea>
+                <span class="help">One phrase per line. When the toggle above is off, Mara picks one of these at random. Leave blank to use the single fallback below.</span>
+              </label>
+              <label class="wide">Fallback acknowledgement text
+                <input id="async_ack_text" name="async_ack_text" type="text" placeholder="Yeah, let me dig into that real quick." title="Used when no phrases are set above, and as the final fallback if agent generation fails.">
+                <span class="help">Single phrase used when no phrases are listed above, and as the last-resort fallback.</span>
+              </label>
+              <label class="wide">Voice inbox JSONL path
+                <input id="voice_inbox_path" name="voice_inbox_path" type="text" placeholder="Leave blank for config\\mara_voice_inbox.jsonl" title="File watched for out-of-band final replies.">
+                <span class="help">Example JSONL line: {"text":"Done researching it.","agent":"hermes"}.</span>
+              </label>
+              <label class="wide">Agent session id
+                <input id="agent_session_id" name="agent_session_id" type="text" placeholder="voice-session" title="Stable session id reused for Hermes/OpenClaw context.">
+                <span class="help">Example: voice-session is the base id used to derive per-agent sessions.</span>
+              </label>
+              <label class="wide">Hermes session id
+                <input id="hermes_session_id" name="hermes_session_id" type="text" placeholder="voice-session-hermes" title="Stable session id sent to Hermes/Mara on every prompt.">
+                <span class="help">Example: voice-session-hermes keeps Mara in the same Hermes session every time.</span>
+              </label>
+              <label class="wide">OpenClaw session id
+                <input id="openclaw_session_id" name="openclaw_session_id" type="text" placeholder="voice-session-openclaw" title="Stable user/session id sent to OpenClaw on every prompt.">
+                <span class="help">Example: voice-session-openclaw keeps Claw in the same OpenClaw session every time.</span>
+              </label>
+              <label class="wide">Agent session history path
+                <input id="agent_session_history_path" name="agent_session_history_path" type="text" placeholder="Leave blank for config\\mara_agent_sessions.json" title="JSON file storing persistent per-agent session history.">
+                <span class="help">Example: leave blank to use the ignored local runtime history file.</span>
               </label>
               <label>TTS device
                 <input id="tts_device" name="tts_device" type="text" placeholder="auto" title="Device used by VoxCPM.">
@@ -501,10 +613,14 @@
 
   <script>
     const ids = [
-      "tts_streaming", "regenerate_voice_reference", "spoken_reply_char_limit",
-      "tts_chunk_char_limit", "tts_stream_chunk_char_limit", "tts_stream_prebuffer_seconds",
+      "tts_streaming", "tts_stream_prebuffer_dynamic", "async_agent_replies", "async_ack_agent", "async_followup_enabled", "agent_session_persistence", "regenerate_voice_reference",
+      "async_ack_grace_seconds", "spoken_reply_char_limit",
+      "tts_chunk_char_limit", "tts_stream_chunk_char_limit", "tts_stream_prebuffer_seconds", "tts_stream_prebuffer_max_seconds",
       "tts_inference_timesteps", "tts_timeout_seconds",
       "ssh_timeout_seconds", "ssh_connect_timeout_seconds", "status_interval_seconds",
+      "async_ack_text", "async_ack_phrases", "voice_inbox_path", "voice_inbox_poll_seconds",
+      "async_followup_initial_delay_seconds", "async_followup_poll_seconds", "async_followup_max_attempts",
+      "agent_session_id", "hermes_session_id", "openclaw_session_id", "agent_session_history_path", "agent_session_history_messages",
       "active_agent", "openclaw_base_url", "openclaw_model", "openclaw_timeout_seconds",
       "audio_device", "tts_device", "capture_dir", "hermes_command",
       "voice_reference_path", "voice_reference_text"
@@ -518,10 +634,86 @@
       return date.toLocaleString();
     }
 
+    function fmtSeconds(value) {
+      const num = Number(value);
+      if (!Number.isFinite(num) || num <= 0) return null;
+      return num >= 100 ? `${num.toFixed(0)}s` : `${num.toFixed(2)}s`;
+    }
+
     function setPill(node, text, state) {
       node.textContent = text;
       node.classList.remove("good", "bad", "warn");
       if (state) node.classList.add(state);
+    }
+
+    function setLed(state) {
+      const led = el("led");
+      led.classList.remove("good", "bad", "warn");
+      if (state) led.classList.add(state);
+    }
+
+    function statusTone(status, type = "") {
+      const value = String(status || type || "").toLowerCase();
+      if (value.includes("error") || value.includes("fail")) return "bad";
+      if (value.includes("thinking") || value.includes("warn") || value.includes("working")) return "warn";
+      if (value.includes("talking") || value.includes("tts") || value.includes("stream") || value.includes("timing")) return "talk";
+      if (value.includes("listening") || value.includes("ready") || value.includes("ok")) return "good";
+      if (value.includes("user")) return "user";
+      if (value.includes("mara") || value.includes("conversation")) return "mara";
+      return "";
+    }
+
+    function agentIdFromEvent(event) {
+      const details = event && typeof event.details === "object" && event.details ? event.details : {};
+      const raw = String(details.agent || details.voice_id || "").toLowerCase();
+      const name = String(details.agent_name || event.message || "").toLowerCase();
+      if (raw === "openclaw" || raw === "claw" || name.includes("openclaw") || name.includes("claw")) return "openclaw";
+      if (raw === "hermes" || name.includes("hermes")) return "hermes";
+      return "";
+    }
+
+    function agentLabel(agent) { return agent === "openclaw" ? "OpenClaw" : "Hermes"; }
+    function agentShortLabel(agent) { return agent === "openclaw" ? "Claw" : "Hermes"; }
+
+    function keywordTone(word) {
+      const value = String(word || "").toLowerCase();
+      if (["error", "failed", "failure", "fail", "warning", "warn"].includes(value)) return "kw-bad";
+      if (["thinking", "working", "waiting", "async", "background", "follow-up", "deferred"].includes(value)) return "kw-warn";
+      if (["listening", "ready", "ok", "complete", "completed", "success"].includes(value)) return "kw-good";
+      if (["talking", "tts", "streaming", "stream", "timing"].includes(value)) return "kw-talk";
+      if (value === "hermes") return "kw-hermes";
+      if (value === "openclaw" || value === "claw") return "kw-claw";
+      if (value === "mara" || value === "reply") return "kw-mara";
+      return "";
+    }
+
+    function appendHighlightedText(node, text) {
+      const source = String(text || "");
+      const pattern = /\b(?:ERROR|FAILED|FAILURE|FAIL|WARNING|WARN|THINKING|WORKING|WAITING|ASYNC|BACKGROUND|FOLLOW-UP|DEFERRED|LISTENING|READY|OK|COMPLETE|COMPLETED|SUCCESS|TALKING|TTS|STREAMING|STREAM|TIMING|Hermes|OpenClaw|Claw|Mara|reply)\b/gi;
+      let lastIndex = 0;
+      for (const match of source.matchAll(pattern)) {
+        const index = match.index ?? 0;
+        if (index > lastIndex) node.append(document.createTextNode(source.slice(lastIndex, index)));
+        const span = document.createElement("span");
+        span.className = `kw ${keywordTone(match[0])}`;
+        span.textContent = match[0];
+        node.append(span);
+        lastIndex = index + match[0].length;
+      }
+      if (lastIndex < source.length) node.append(document.createTextNode(source.slice(lastIndex)));
+    }
+
+    function makeStatusChip(status, type) {
+      const chip = document.createElement("span");
+      const tone = statusTone(status, type);
+      chip.className = tone ? `status-chip ${tone}` : "status-chip";
+      chip.textContent = status || type || "";
+      return chip;
+    }
+
+    function eventText(event) {
+      const details = event && typeof event.details === "object" && event.details ? event.details : {};
+      return String(details.text || event.message || "");
     }
 
     function renderEvents(events) {
@@ -532,22 +724,197 @@
         const row = document.createElement("tr");
         const time = document.createElement("td");
         const status = document.createElement("td");
+        const agent = document.createElement("td");
         const message = document.createElement("td");
+        const tone = statusTone(event.status, event.type);
+        if (tone) row.className = `event-${tone}`;
         time.className = "time";
         status.className = "status";
+        agent.className = "agent";
         time.textContent = fmtTime(event.timestamp);
-        status.textContent = event.status || event.type || "";
-        message.textContent = event.message || "";
-        row.append(time, status, message);
+        status.append(makeStatusChip(event.status, event.type));
+        agent.textContent = agentIdFromEvent(event) ? agentShortLabel(agentIdFromEvent(event)) : "-";
+        appendHighlightedText(message, event.message || "");
+        row.append(time, status, agent, message);
         body.append(row);
       }
     }
 
+    // --- Timing telemetry derived from the event stream -------------------
+    function computeTelemetry(events) {
+      const telemetry = { dictation: null, generation: null, speech: null, throughput: null };
+      for (const event of events || []) {
+        const details = event && typeof event.details === "object" && event.details ? event.details : {};
+        const type = String(event.type || "");
+        const status = String(event.status || "");
+        if (type === "conversation" && status === "USER" && details.transcription_seconds) {
+          telemetry.dictation = Number(details.transcription_seconds);
+        }
+        if (type === "metric" && status === "TIMING") {
+          if (details.agent_seconds) telemetry.generation = Number(details.agent_seconds);
+          if (details.tts_seconds) telemetry.speech = Number(details.tts_seconds);
+          if (details.chars_per_second) telemetry.throughput = Number(details.chars_per_second);
+        } else if (type === "conversation" && status === "MARA" && details.agent_seconds) {
+          telemetry.generation = Number(details.agent_seconds);
+        }
+      }
+      return telemetry;
+    }
+
+    function renderTelemetry(events) {
+      const t = computeTelemetry(events);
+      const setMetric = (id, text) => {
+        const node = el(id);
+        if (text) node.textContent = text;
+        else node.textContent = "--";
+      };
+      setMetric("metricDictation", fmtSeconds(t.dictation));
+      setMetric("metricGeneration", fmtSeconds(t.generation));
+      setMetric("metricSpeech", fmtSeconds(t.speech));
+      if (Number.isFinite(t.throughput) && t.throughput > 0) {
+        el("metricThroughput").innerHTML = `${t.throughput.toFixed(0)} <small>ch/s</small>`;
+      } else {
+        el("metricThroughput").textContent = "--";
+      }
+    }
+
+    // --- Conversation panels: actual dialogue only, no log/status noise ---
+    function addChatEntry(logs, agent, entry) {
+      const target = agent === "openclaw" ? "openclaw" : "hermes";
+      logs[target].push(entry);
+    }
+
+    function buildAgentLogs(events, route) {
+      const logs = { hermes: [], openclaw: [] };
+      const pendingUsers = [];
+      const fallbackAgent = route?.next_agent || route?.active_agent || "hermes";
+
+      for (const event of events || []) {
+        const type = String(event.type || "");
+        const status = String(event.status || "");
+        const agent = agentIdFromEvent(event);
+        const details = event && typeof event.details === "object" && event.details ? event.details : {};
+
+        if (type === "conversation" && status === "USER") {
+          const entry = {
+            role: "user",
+            text: eventText(event),
+            timestamp: event.timestamp,
+            timing: details.transcription_seconds ? `dictation ${Number(details.transcription_seconds).toFixed(2)}s` : "",
+          };
+          if (agent) {
+            addChatEntry(logs, agent, entry);
+          } else {
+            pendingUsers.push(entry);
+          }
+          continue;
+        }
+
+        if (type === "conversation" && status === "MARA") {
+          const replyAgent = agent || fallbackAgent;
+          while (pendingUsers.length) addChatEntry(logs, replyAgent, pendingUsers.shift());
+          const rawSource = String(details.source || "");
+          const isAck = rawSource === "ack";
+          // "async" is already conveyed by the async tag; only surface distinct sources.
+          const sourceTag = isAck || rawSource === "async" ? "" : rawSource;
+          addChatEntry(logs, replyAgent, {
+            role: "mara",
+            text: eventText(event),
+            timestamp: event.timestamp,
+            async: Boolean(details.async),
+            source: sourceTag,
+            ack: isAck,
+            timing: details.agent_seconds ? `gen ${Number(details.agent_seconds).toFixed(2)}s` : "",
+          });
+          continue;
+        }
+        // status / error / metric events are intentionally excluded from the
+        // conversation panels — they live in the Event Log instead.
+      }
+
+      while (pendingUsers.length) addChatEntry(logs, fallbackAgent, pendingUsers.shift());
+      return logs;
+    }
+
+    function renderChatLine(agent, entry) {
+      const row = document.createElement("div");
+      row.className = `chat-line ${entry.role} ${agent}`;
+
+      const speaker = document.createElement("div");
+      speaker.className = "speaker";
+      const name = document.createElement("span");
+      name.className = "speaker-name";
+      name.textContent = entry.role === "user" ? "You" : agentShortLabel(agent);
+      const time = document.createElement("span");
+      time.className = "chat-time";
+      time.textContent = fmtTime(entry.timestamp);
+      speaker.append(name, time);
+
+      const content = document.createElement("div");
+      const text = document.createElement("div");
+      text.className = "chat-text";
+      appendHighlightedText(text, entry.text);
+      content.append(text);
+
+      const tags = document.createElement("div");
+      tags.className = "chat-meta";
+      if (entry.ack) {
+        const ackTag = document.createElement("span");
+        ackTag.className = "tag ack";
+        ackTag.textContent = "ack";
+        tags.append(ackTag);
+      }
+      if (entry.timing) {
+        const timing = document.createElement("span");
+        timing.className = "tag timing";
+        timing.textContent = entry.timing;
+        tags.append(timing);
+      }
+      if (entry.async) {
+        const asyncTag = document.createElement("span");
+        asyncTag.className = "tag async";
+        asyncTag.textContent = "async";
+        tags.append(asyncTag);
+      }
+      if (entry.source) {
+        const source = document.createElement("span");
+        source.className = "tag source";
+        source.textContent = entry.source;
+        tags.append(source);
+      }
+      if (tags.childElementCount) content.append(tags);
+
+      row.append(speaker, content);
+      return row;
+    }
+
+    function renderAgentLog(agent, entries) {
+      const log = el(`${agent}Log`);
+      const count = el(`${agent}Count`);
+      const visible = entries.slice(-60);
+      log.replaceChildren();
+      count.textContent = `${entries.length} ${entries.length === 1 ? "entry" : "entries"}`;
+      if (!visible.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = agent === "openclaw" ? "No Claw conversation yet." : "No Hermes conversation yet.";
+        log.append(empty);
+        return;
+      }
+      for (const entry of visible) log.append(renderChatLine(agent, entry));
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function renderAgentLogs(events, route) {
+      const logs = buildAgentLogs(events, route || {});
+      renderAgentLog("hermes", logs.hermes);
+      renderAgentLog("openclaw", logs.openclaw);
+    }
+
     function renderState(state) {
+      const events = state.recent_events || [];
       el("currentStatus").textContent = state.current_status || "UNKNOWN";
       el("currentMessage").textContent = state.current_message || "-";
-      el("lastUser").textContent = state.last_user_text || "No transcription yet.";
-      el("lastMara").textContent = state.last_mara_reply || "No reply yet.";
       el("updated").textContent = fmtTime(state.last_updated);
       el("eventCount").textContent = `${state.event_count || 0} events`;
       el("subtitle").textContent = state.event_log_path || "";
@@ -555,17 +922,27 @@
       const hasError = Boolean(state.last_error);
       el("errorPanel").hidden = !hasError;
       el("lastError").textContent = state.last_error || "";
-      renderEvents(state.recent_events || []);
+      renderEvents(events);
+      // Chat panels use the dedicated conversation list so status/metric events
+      // can't scroll the actual dialogue out of view.
+      renderAgentLogs(state.conversation_events || events, state.agent_route || {});
+      renderTelemetry(events);
 
       const health = state.tts_health || {};
       const payload = health.payload || {};
+      const device = payload.effective_device || payload.device || "";
+      const onGpu = String(device).toLowerCase().startsWith("cuda");
+      const deviceSuffix = device ? ` · ${device}${onGpu ? "" : " (slow)"}` : "";
       if (health.ok) {
         setPill(el("connection"), "Connected", "good");
-        el("ttsStatus").textContent = "OK";
+        setLed("good");
+        el("ttsStatus").textContent = `OK${deviceSuffix}`;
       } else {
         setPill(el("connection"), "Check TTS", "warn");
-        el("ttsStatus").textContent = "Degraded";
+        setLed("warn");
+        el("ttsStatus").textContent = `Degraded${deviceSuffix}`;
       }
+      if (hasError) setLed("bad");
       el("streamStatus").textContent = payload.streaming_supported ? "Available" : "Unavailable";
       setPill(el("voiceMode"), payload.voice_generation_mode || "Unknown", payload.voice_reference_ready ? "good" : "warn");
       const healthDisplay = Object.keys(payload).length ? payload : health;
@@ -573,7 +950,7 @@
     }
 
     async function loadState() {
-      const response = await fetch("/api/state?limit=500&recent_limit=100", { cache: "no-store" });
+      const response = await fetch("/api/state?limit=1500&recent_limit=120", { cache: "no-store" });
       if (!response.ok) throw new Error(`state ${response.status}`);
       renderState(await response.json());
     }
@@ -648,15 +1025,11 @@
       }
     }
 
-    function agentLabel(agent) {
-      return agent === "openclaw" ? "OpenClaw" : "Hermes";
-    }
-
     function renderRoute(route) {
       const active = route.active_agent || el("active_agent")?.value || "hermes";
       const next = route.next_agent || "";
       if (el("active_agent")) el("active_agent").value = active;
-      el("agentStatus").textContent = next ? `${agentLabel(active)} (next ${agentLabel(next)})` : agentLabel(active);
+      el("agentStatus").textContent = next ? `${agentLabel(active)} → ${agentLabel(next)}` : agentLabel(active);
       const keyStatus = route.openclaw_key_configured ? "OpenClaw key configured" : "OpenClaw key missing";
       const nextText = next ? ` Next prompt: ${agentLabel(next)}.` : "";
       el("routeStatus").textContent = `Default: ${agentLabel(active)}.${nextText} ${keyStatus}.`;
@@ -674,16 +1047,75 @@
       return payload;
     }
 
-    async function refreshAll() {
+    let autoLaunchTried = false;
+
+    async function fetchLaunchStatus() {
       try {
-        await loadState();
-        setPill(el("connection"), el("connection").textContent, el("connection").classList.contains("warn") ? "warn" : "good");
+        const response = await fetch("/api/launch", { cache: "no-store" });
+        if (!response.ok) return null;
+        return await response.json();
       } catch (error) {
-        setPill(el("connection"), `Disconnected: ${error.message}`, "bad");
+        return null;
       }
     }
 
+    function renderPipeline(status) {
+      const pill = el("pipeline");
+      const btn = el("startPipeline");
+      if (!status) {
+        setPill(pill, "Pipeline ?", "warn");
+        return;
+      }
+      if (status.running) {
+        setPill(pill, "Pipeline up", "good");
+        btn.disabled = true;
+        btn.textContent = "Pipeline Running";
+      } else {
+        setPill(pill, "Pipeline down", "bad");
+        btn.disabled = !status.launcher_available;
+        btn.textContent = status.launcher_available ? "Start Pipeline" : "Launcher missing";
+      }
+    }
+
+    async function startPipeline() {
+      el("startPipeline").disabled = true;
+      el("saveStatus").textContent = "Starting pipeline...";
+      try {
+        const response = await fetch("/api/launch", { method: "POST" });
+        const payload = await response.json();
+        renderPipeline(payload);
+        el("saveStatus").textContent = payload.launched
+          ? "Pipeline starting. Give the TTS server a moment to load."
+          : `Pipeline: ${payload.reason || "no change"}.`;
+      } catch (error) {
+        el("saveStatus").textContent = error.message;
+      }
+    }
+
+    async function ensurePipeline() {
+      const status = await fetchLaunchStatus();
+      renderPipeline(status);
+      // Auto-start once per page load if the stack is down. The server guards
+      // against duplicate launches (cooldown + TTS-health check), so this no-ops
+      // when the pipeline is already running.
+      if (!autoLaunchTried && status && !status.running && status.launcher_available) {
+        autoLaunchTried = true;
+        await startPipeline();
+      }
+    }
+
+    async function refreshAll() {
+      try {
+        await loadState();
+      } catch (error) {
+        setPill(el("connection"), `Disconnected: ${error.message}`, "bad");
+        setLed("bad");
+      }
+      renderPipeline(await fetchLaunchStatus());
+    }
+
     el("refresh").addEventListener("click", refreshAll);
+    el("startPipeline").addEventListener("click", startPipeline);
     el("reloadOptions").addEventListener("click", () => loadOptions().catch((error) => {
       el("saveStatus").textContent = error.message;
     }));
@@ -707,7 +1139,7 @@
     loadOptions().catch((error) => {
       el("saveStatus").textContent = error.message;
     });
-    refreshAll();
+    refreshAll().then(ensurePipeline);
     setInterval(refreshAll, 2000);
   </script>
 </body>

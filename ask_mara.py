@@ -5,6 +5,12 @@ import os
 from pathlib import Path
 
 from mara_pipeline import (
+    DEFAULT_AGENT_SESSION_HISTORY_MESSAGES,
+    DEFAULT_AGENT_SESSION_HISTORY_PATH,
+    DEFAULT_AGENT_SESSION_ID,
+    DEFAULT_AGENT_SESSION_PERSISTENCE,
+    DEFAULT_HERMES_SESSION_ID,
+    DEFAULT_OPENCLAW_SESSION_ID,
     DEFAULT_CAPTURE_DIR,
     DEFAULT_OPENCLAW_BASE_URL,
     DEFAULT_OPENCLAW_MODEL,
@@ -57,6 +63,46 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--openclaw-base-url", default=DEFAULT_OPENCLAW_BASE_URL)
     parser.add_argument("--openclaw-model", default=DEFAULT_OPENCLAW_MODEL)
     parser.add_argument(
+        "--agent-session-id",
+        default=DEFAULT_AGENT_SESSION_ID,
+        help="Base voice session id. Per-agent ids default to <base>-hermes and <base>-openclaw.",
+    )
+    parser.add_argument(
+        "--hermes-session-id",
+        default=DEFAULT_HERMES_SESSION_ID,
+        help="Stable session id sent to Hermes. Blank derives from --agent-session-id.",
+    )
+    parser.add_argument(
+        "--openclaw-session-id",
+        default=DEFAULT_OPENCLAW_SESSION_ID,
+        help="Stable user/session id sent to OpenClaw. Blank derives from --agent-session-id.",
+    )
+    parser.add_argument(
+        "--agent-session-history-path",
+        default=str(DEFAULT_AGENT_SESSION_HISTORY_PATH),
+        help="JSON file storing persistent per-agent conversation history.",
+    )
+    parser.add_argument(
+        "--agent-session-history-messages",
+        type=int,
+        default=DEFAULT_AGENT_SESSION_HISTORY_MESSAGES,
+        help="Maximum prior user/assistant messages retained per agent session.",
+    )
+    session_group = parser.add_mutually_exclusive_group()
+    session_group.add_argument(
+        "--agent-session-persistence",
+        dest="agent_session_persistence",
+        action="store_true",
+        default=DEFAULT_AGENT_SESSION_PERSISTENCE,
+        help="Persist and reuse per-agent conversation history.",
+    )
+    session_group.add_argument(
+        "--no-agent-session-persistence",
+        dest="agent_session_persistence",
+        action="store_false",
+        help="Disable persistent per-agent conversation history.",
+    )
+    parser.add_argument(
         "--openclaw-timeout",
         type=lambda value: parse_optional_timeout(value, DEFAULT_OPENCLAW_TIMEOUT_SECONDS),
         default=DEFAULT_OPENCLAW_TIMEOUT_SECONDS,
@@ -96,6 +142,12 @@ def main() -> int:
         openclaw_base_url=args.openclaw_base_url,
         openclaw_model=args.openclaw_model,
         openclaw_timeout_seconds=args.openclaw_timeout,
+        agent_session_id=args.agent_session_id,
+        hermes_session_id=args.hermes_session_id,
+        openclaw_session_id=args.openclaw_session_id,
+        agent_session_history_path=Path(args.agent_session_history_path),
+        agent_session_history_messages=args.agent_session_history_messages,
+        agent_session_persistence=args.agent_session_persistence,
         tts_url=args.tts_url,
         tts_health_url=args.tts_health_url,
         audio_device=args.audio_device,

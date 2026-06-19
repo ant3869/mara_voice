@@ -19,10 +19,22 @@ class MaraRuntimeState:
     last_error: str = ""
     event_count: int = 0
     recent_events: list[dict[str, Any]] = field(default_factory=list)
+    conversation_events: list[dict[str, Any]] = field(default_factory=list)
 
 
-def build_state(events: list[dict[str, Any]], recent_limit: int = 50) -> MaraRuntimeState:
-    state = MaraRuntimeState(event_count=len(events), recent_events=events[-recent_limit:])
+def build_state(
+    events: list[dict[str, Any]],
+    recent_limit: int = 50,
+    conversation_limit: int = 120,
+) -> MaraRuntimeState:
+    # Conversation panels read this dedicated list so status/metric/timing events
+    # can never push the actual dialogue out of the recent-events window.
+    conversation = [event for event in events if str(event.get("type", "")) == "conversation"]
+    state = MaraRuntimeState(
+        event_count=len(events),
+        recent_events=events[-recent_limit:],
+        conversation_events=conversation[-conversation_limit:],
+    )
     for event in events:
         event_type = str(event.get("type", ""))
         status = str(event.get("status", ""))

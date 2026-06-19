@@ -9,7 +9,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from threading import RLock
+from threading import Lock
 
 import numpy as np
 import soundfile as sf
@@ -47,9 +47,9 @@ DEFAULT_VOICE_STYLE = os.getenv(
 VOICE_REFERENCE_STYLE_VERSION = "clear_speech_v2"
 DEFAULT_LOCK_VOICE_STYLE = os.getenv("MARA_LOCK_VOICE_STYLE", "1") != "0"
 DEFAULT_TTS_SEED = int(os.getenv("MARA_TTS_SEED", "4242"))
-DEFAULT_DEVICE = os.getenv("MARA_TTS_DEVICE", "auto")
+DEFAULT_DEVICE = os.getenv("MARA_TTS_DEVICE", "cuda")
 DEFAULT_OPTIMIZE = os.getenv("MARA_TTS_OPTIMIZE", "1") != "0"
-DEFAULT_INFERENCE_TIMESTEPS = int(os.getenv("MARA_TTS_INFERENCE_TIMESTEPS", "8"))
+DEFAULT_INFERENCE_TIMESTEPS = int(os.getenv("MARA_TTS_INFERENCE_TIMESTEPS", "6"))
 DEFAULT_USE_VOICE_REFERENCE = os.getenv("MARA_USE_VOICE_REFERENCE", "1") != "0"
 DEFAULT_AUTO_CREATE_VOICE_REFERENCE = os.getenv("MARA_AUTO_CREATE_VOICE_REFERENCE", "1") != "0"
 DEFAULT_REGENERATE_VOICE_REFERENCE = os.getenv("MARA_REGENERATE_VOICE_REFERENCE", "0") == "1"
@@ -84,9 +84,14 @@ MODEL = None
 MODEL_ERROR: str | None = None
 MODEL_PATH = DEFAULT_MODEL_PATH
 MODEL_DEVICE = DEFAULT_DEVICE
+MODEL_EFFECTIVE_DEVICE: str | None = None
 MODEL_OPTIMIZE = DEFAULT_OPTIMIZE
 MODEL_INFERENCE_TIMESTEPS = DEFAULT_INFERENCE_TIMESTEPS
-MODEL_LOCK = RLock()
+# A plain (non-reentrant) Lock, NOT an RLock: the streaming endpoint holds this across
+# the response generator's yields, and Starlette resumes that generator on different
+# threadpool threads. An RLock is thread-owned and raises "cannot release un-acquired
+# lock" when released from another thread; a plain Lock can be released by any thread.
+MODEL_LOCK = Lock()
 VOICE_REFERENCE_ENABLED = DEFAULT_USE_VOICE_REFERENCE
 VOICE_REFERENCE_AUTO_CREATE = DEFAULT_AUTO_CREATE_VOICE_REFERENCE
 VOICE_REFERENCE_REGENERATE = DEFAULT_REGENERATE_VOICE_REFERENCE
@@ -96,6 +101,7 @@ VOICE_PROMPT_CACHE = None
 VOICE_PROMPT_CACHES: dict[str, object] = {}
 VOICE_REFERENCE_ERROR: str | None = None
 VOICE_REFERENCE_ERRORS: dict[str, str | None] = {}
+_REGENERATED_VOICE_IDS: set[str] = set()
 
 try:
     import torch
@@ -184,8 +190,40 @@ def seed_generation() -> None:
             torch.cuda.manual_seed_all(DEFAULT_TTS_SEED)
 
 
+def cuda_available() -> bool:
+    return bool(TORCH_AVAILABLE and torch is not None and torch.cuda.is_available())
+
+
+def resolve_device(requested: str | None) -> str:
+    """Resolve the configured device to a concrete one, forcing the GPU when present.
+
+    "auto" (and blank) become "cuda" whenever CUDA is available. If a CUDA device is
+    requested but unavailable we fall back to CPU so the server still runs, but we log
+    loudly because CPU inference is dramatically slower.
+    """
+    normalized = (requested or "").strip().lower()
+    if normalized in ("", "auto"):
+        if cuda_available():
+            return "cuda"
+        logger.warning(
+            "TTS device is 'auto' but CUDA is not available; running on CPU, which is very slow. "
+            "Install a CUDA-enabled PyTorch build and confirm the GPU is visible to use it."
+        )
+        return "cpu"
+    if normalized.startswith("cuda"):
+        if cuda_available():
+            return requested  # preserve an explicit index like cuda:0
+        logger.error(
+            "TTS device '%s' was requested but CUDA is not available; falling back to CPU (very slow). "
+            "Check that a CUDA-enabled PyTorch is installed and the GPU is visible (nvidia-smi).",
+            requested,
+        )
+        return "cpu"
+    return requested
+
+
 def ensure_model_loaded():
-    global MODEL, MODEL_ERROR
+    global MODEL, MODEL_ERROR, MODEL_EFFECTIVE_DEVICE
 
     with MODEL_LOCK:
         if MODEL is not None:
@@ -202,19 +240,21 @@ def ensure_model_loaded():
             MODEL_ERROR = f"Model directory was not found at {MODEL_PATH}"
             raise RuntimeError(MODEL_ERROR)
 
+        effective_device = resolve_device(MODEL_DEVICE)
+        MODEL_EFFECTIVE_DEVICE = effective_device
         logger.info(
-            "Loading VoxCPM2 from %s with device=%s optimize=%s",
+            "Loading VoxCPM2 from %s with device=%s (effective=%s) optimize=%s",
             MODEL_PATH,
             MODEL_DEVICE,
+            effective_device,
             MODEL_OPTIMIZE,
         )
         start_time = time.perf_counter()
         try:
-            requested_device = None if MODEL_DEVICE in ("", "auto", None) else MODEL_DEVICE
             MODEL = VoxCPM.from_pretrained(
                 str(MODEL_PATH),
                 load_denoiser=False,
-                device=requested_device,
+                device=effective_device,
                 optimize=MODEL_OPTIMIZE,
             )
         except Exception as exc:
@@ -227,12 +267,12 @@ def ensure_model_loaded():
         return MODEL
 
 
-def ensure_voice_reference_file(model, profile: VoiceProfile) -> None:
+def ensure_voice_reference_file(model, profile: VoiceProfile, regenerate: bool) -> None:
     if not VOICE_REFERENCE_ENABLED:
         return
 
     metadata_path = profile.reference_path.with_suffix(f"{profile.reference_path.suffix}.json")
-    if profile.reference_path.exists() and metadata_path.exists() and not VOICE_REFERENCE_REGENERATE:
+    if profile.reference_path.exists() and metadata_path.exists() and not regenerate:
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except Exception:
@@ -248,10 +288,10 @@ def ensure_voice_reference_file(model, profile: VoiceProfile) -> None:
 
         logger.info("Persistent voice reference metadata changed; regenerating %s", profile.reference_path)
 
-    elif profile.reference_path.exists() and not VOICE_REFERENCE_REGENERATE:
+    elif profile.reference_path.exists() and not regenerate:
         logger.info("Persistent voice reference metadata is missing; regenerating %s", profile.reference_path)
 
-    if profile.reference_path.exists() and not VOICE_REFERENCE_REGENERATE and not VOICE_REFERENCE_AUTO_CREATE:
+    if profile.reference_path.exists() and not regenerate and not VOICE_REFERENCE_AUTO_CREATE:
         return
 
     if not VOICE_REFERENCE_AUTO_CREATE:
@@ -286,19 +326,23 @@ def ensure_voice_reference_file(model, profile: VoiceProfile) -> None:
 
 
 def ensure_voice_prompt_cache(model, voice_id: str | None = None):
-    global VOICE_PROMPT_CACHE, VOICE_REFERENCE_ERROR, VOICE_REFERENCE_REGENERATE
+    global VOICE_PROMPT_CACHE, VOICE_REFERENCE_ERROR
 
     if not VOICE_REFERENCE_ENABLED:
         VOICE_REFERENCE_ERROR = None
         return None
 
     profile = get_voice_profile(voice_id)
+    # Honor a regeneration request once per voice id. OpenClaw's cache is built
+    # lazily on its first request, after Hermes was already regenerated at startup,
+    # so a single global flag would skip every profile but the first.
+    regenerate = VOICE_REFERENCE_REGENERATE and profile.voice_id not in _REGENERATED_VOICE_IDS
     prompt_cache = VOICE_PROMPT_CACHES.get(profile.voice_id)
-    if prompt_cache is not None and not VOICE_REFERENCE_REGENERATE:
+    if prompt_cache is not None and not regenerate:
         return prompt_cache
 
     try:
-        ensure_voice_reference_file(model, profile)
+        ensure_voice_reference_file(model, profile, regenerate)
         prompt_cache = model.tts_model.build_prompt_cache(
             reference_wav_path=str(profile.reference_path),
         )
@@ -313,7 +357,8 @@ def ensure_voice_prompt_cache(model, voice_id: str | None = None):
 
     VOICE_REFERENCE_ERROR = None
     VOICE_REFERENCE_ERRORS[profile.voice_id] = None
-    VOICE_REFERENCE_REGENERATE = False
+    if regenerate:
+        _REGENERATED_VOICE_IDS.add(profile.voice_id)
     logger.info("Persistent %s voice reference cache is ready: %s", profile.voice_id, profile.reference_path)
     return prompt_cache
 
@@ -359,6 +404,8 @@ def healthz() -> dict[str, object]:
         "model_loaded": MODEL is not None,
         "model_path": str(MODEL_PATH),
         "device": MODEL_DEVICE,
+        "effective_device": MODEL_EFFECTIVE_DEVICE,
+        "cuda_available": cuda_available(),
         "optimize": MODEL_OPTIMIZE,
         "inference_timesteps": MODEL_INFERENCE_TIMESTEPS,
         "error": MODEL_ERROR,
@@ -536,7 +583,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--inference-timesteps",
         type=int,
         default=DEFAULT_INFERENCE_TIMESTEPS,
-        help="Diffusion sampling steps. Lower is faster; 8 is the launcher default, 10 was the previous default.",
+        help="Diffusion sampling steps. Lower is faster; 6 is the launcher default, try 4 for max speed or 8-10 for best quality.",
     )
     parser.add_argument(
         "--voice-reference-path",
@@ -581,49 +628,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-
-
-
-
-
-
-
-
-
-# import io
-# import soundfile as sf
-# from fastapi import FastAPI
-# from pydantic import BaseModel
-# from fastapi.responses import StreamingResponse
-# import uvicorn
-# from voxcpm import VoxCPM
-
-# app = FastAPI()
-
-# print("Loading VoxCPM2 into VRAM... (This takes a minute on first boot)")
-# model = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False)
-# print("Mara's vocal cords are online.")
-
-# class TTSRequest(BaseModel):
-#     text: str
-
-# @app.post("/tts")
-# def generate_tts(req: TTSRequest):
-#     # This is the magic prompt that designs Mara's voice on the fly
-#     voice_prompt = f"(A sultry, confident female operator voice, slightly bossy but warm){req.text}"
-
-#     wav = model.generate(
-#         text=voice_prompt,        cfg_value=2.0,
-#         inference_timesteps=10
-#     )
-
-#     # Convert audio array to WAV format in memory
-#     buf = io.BytesIO()
-#     sf.write(buf, wav, model.tts_model.sample_rate, format='WAV')
-#     buf.seek(0)
-#     return StreamingResponse(buf, media_type="audio/wav")
-
-# if __name__ == "__main__":
-#     uvicorn.run(app, host="127.0.0.1", port=8000)

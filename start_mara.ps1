@@ -2,18 +2,42 @@ param(
     [string]$AudioDevice,
     [string]$CaptureDir,
     [string]$LogLevel = "INFO",
-    [string]$TtsDevice = "auto",
+    [string]$TtsDevice = "cuda",
     [int]$HealthTimeoutSeconds = 120,
     [double]$SshTimeoutSeconds = 0,
     [double]$SshConnectTimeoutSeconds = 5,
     [double]$TtsTimeoutSeconds = 300,
-    [int]$TtsInferenceTimesteps = 8,
+    [int]$TtsInferenceTimesteps = 6,
     [double]$StatusIntervalSeconds = 10,
     [int]$SpokenReplyCharLimit = 900,
     [int]$TtsChunkCharLimit = 450,
-    [int]$TtsStreamChunkCharLimit = 180,
-    [double]$TtsStreamPrebufferSeconds = 8,
+    [int]$TtsStreamChunkCharLimit = 1200,
+    [double]$TtsStreamPrebufferSeconds = 0.5,
+    [double]$TtsStreamPrebufferMaxSeconds = 4,
+    [switch]$TtsStreamPrebufferDynamic = $true,
+    [switch]$NoTtsStreamPrebufferDynamic,
     [string]$TtsStreamUrl,
+    [switch]$AsyncAgentReplies = $true,
+    [switch]$NoAsyncAgentReplies,
+    [switch]$AsyncAckAgent,
+    [switch]$NoAsyncAckAgent,
+    [double]$AsyncAckGraceSeconds = 5,
+    [string]$AsyncAckText,
+    [string]$AsyncAckPhrases,
+    [switch]$AsyncFollowup = $true,
+    [switch]$NoAsyncFollowup,
+    [double]$AsyncFollowupInitialDelaySeconds = 3,
+    [double]$AsyncFollowupPollSeconds = 8,
+    [int]$AsyncFollowupMaxAttempts = 60,
+    [string]$VoiceInboxPath,
+    [double]$VoiceInboxPollSeconds = 5,
+    [string]$AgentSessionId = "voice-session",
+    [string]$HermesSessionId,
+    [string]$OpenClawSessionId,
+    [string]$AgentSessionHistoryPath,
+    [int]$AgentSessionHistoryMessages = 20,
+    [switch]$AgentSessionPersistence = $true,
+    [switch]$NoAgentSessionPersistence,
     [string]$ConfigPath,
     [string]$HermesCommand,
     [string]$ActiveAgent = "hermes",
@@ -26,7 +50,7 @@ param(
     [switch]$DisableVoiceReference,
     [switch]$RegenerateVoiceReference,
     [switch]$ForcePolling,
-    [switch]$TtsStreaming,
+    [switch]$TtsStreaming = $true,
     [switch]$NoTtsStreaming,
     [switch]$Gui,
     [switch]$NoGui,
@@ -102,8 +126,28 @@ function Import-DotEnvFile {
     }
 }
 
-if ($TtsStreaming -and $NoTtsStreaming) {
+if ($PSBoundParameters.ContainsKey('TtsStreaming') -and $TtsStreaming -and $NoTtsStreaming) {
     throw "Use either -TtsStreaming or -NoTtsStreaming, not both."
+}
+
+if ($PSBoundParameters.ContainsKey('TtsStreamPrebufferDynamic') -and $TtsStreamPrebufferDynamic -and $NoTtsStreamPrebufferDynamic) {
+    throw "Use either -TtsStreamPrebufferDynamic or -NoTtsStreamPrebufferDynamic, not both."
+}
+
+if ($PSBoundParameters.ContainsKey('AsyncAgentReplies') -and $AsyncAgentReplies -and $NoAsyncAgentReplies) {
+    throw "Use either -AsyncAgentReplies or -NoAsyncAgentReplies, not both."
+}
+
+if ($PSBoundParameters.ContainsKey('AsyncAckAgent') -and $AsyncAckAgent -and $NoAsyncAckAgent) {
+    throw "Use either -AsyncAckAgent or -NoAsyncAckAgent, not both."
+}
+
+if ($PSBoundParameters.ContainsKey('AsyncFollowup') -and $AsyncFollowup -and $NoAsyncFollowup) {
+    throw "Use either -AsyncFollowup or -NoAsyncFollowup, not both."
+}
+
+if ($PSBoundParameters.ContainsKey('AgentSessionPersistence') -and $AgentSessionPersistence -and $NoAgentSessionPersistence) {
+    throw "Use either -AgentSessionPersistence or -NoAgentSessionPersistence, not both."
 }
 
 if ($Gui -and $NoGui) {
@@ -226,182 +270,149 @@ function Reset-SavedRegenerateVoiceReference {
     }
 }
 
-if (-not $PSBoundParameters.ContainsKey('AudioDevice') -and (Test-EnvOption "MARA_AUDIO_DEVICE")) {
-    $AudioDevice = Get-EnvOption "MARA_AUDIO_DEVICE"
+function Resolve-Option {
+    param(
+        [hashtable]$Bound,
+        [string]$Name,
+        $Current,
+        [string]$EnvName = "",
+        [string]$SavedName = "",
+        [ValidateSet('String', 'Int', 'Double')]
+        [string]$Type = 'String',
+        [switch]$SavedKeepBlank
+    )
+
+    # Precedence (highest first): explicit -Parameter, saved GUI option, environment
+    # variable, then the parameter default. This matches the original two-pass logic
+    # where the environment pass ran first and the saved-config pass ran second.
+    if ($Bound.ContainsKey($Name)) {
+        return $Current
+    }
+
+    if ($SavedName -and (Test-SavedOption $SavedName)) {
+        $savedValue = $savedConfig.$SavedName
+        switch ($Type) {
+            'Int' { return [int]$savedValue }
+            'Double' { return [double]$savedValue }
+            default {
+                $savedText = [string]$savedValue
+                if ($SavedKeepBlank -or -not [string]::IsNullOrWhiteSpace($savedText)) {
+                    return $savedText
+                }
+                # Whitespace-only saved string: fall through to environment/default.
+            }
+        }
+    }
+
+    if ($EnvName -and (Test-EnvOption $EnvName)) {
+        switch ($Type) {
+            'Int' { return [int](Get-EnvOption $EnvName) }
+            'Double' { return [double](Get-EnvOption $EnvName) }
+            default { return (Get-EnvOption $EnvName) }
+        }
+    }
+
+    return $Current
 }
 
-if (-not $PSBoundParameters.ContainsKey('CaptureDir') -and (Test-EnvOption "MARA_CAPTURE_DIR")) {
-    $CaptureDir = Get-EnvOption "MARA_CAPTURE_DIR"
-}
+$boundParams = $PSBoundParameters
 
-if (-not $PSBoundParameters.ContainsKey('LogLevel') -and (Test-EnvOption "MARA_LOG_LEVEL")) {
-    $LogLevel = Get-EnvOption "MARA_LOG_LEVEL"
-}
+# --- Scalar options: explicit param > saved GUI option > environment > default ---
+$AudioDevice = Resolve-Option $boundParams 'AudioDevice' $AudioDevice -EnvName 'MARA_AUDIO_DEVICE' -SavedName 'audio_device' -SavedKeepBlank
+$CaptureDir = Resolve-Option $boundParams 'CaptureDir' $CaptureDir -EnvName 'MARA_CAPTURE_DIR' -SavedName 'capture_dir' -SavedKeepBlank
+$LogLevel = Resolve-Option $boundParams 'LogLevel' $LogLevel -EnvName 'MARA_LOG_LEVEL'
+$TtsDevice = Resolve-Option $boundParams 'TtsDevice' $TtsDevice -EnvName 'MARA_TTS_DEVICE' -SavedName 'tts_device'
+$SshTimeoutSeconds = Resolve-Option $boundParams 'SshTimeoutSeconds' $SshTimeoutSeconds -EnvName 'MARA_SSH_TIMEOUT' -SavedName 'ssh_timeout_seconds' -Type 'Double'
+$SshConnectTimeoutSeconds = Resolve-Option $boundParams 'SshConnectTimeoutSeconds' $SshConnectTimeoutSeconds -EnvName 'MARA_SSH_CONNECT_TIMEOUT' -SavedName 'ssh_connect_timeout_seconds' -Type 'Double'
+$TtsTimeoutSeconds = Resolve-Option $boundParams 'TtsTimeoutSeconds' $TtsTimeoutSeconds -EnvName 'MARA_TTS_TIMEOUT' -SavedName 'tts_timeout_seconds' -Type 'Double'
+$TtsInferenceTimesteps = Resolve-Option $boundParams 'TtsInferenceTimesteps' $TtsInferenceTimesteps -EnvName 'MARA_TTS_INFERENCE_TIMESTEPS' -SavedName 'tts_inference_timesteps' -Type 'Int'
+$StatusIntervalSeconds = Resolve-Option $boundParams 'StatusIntervalSeconds' $StatusIntervalSeconds -EnvName 'MARA_STATUS_INTERVAL' -SavedName 'status_interval_seconds' -Type 'Double'
+$SpokenReplyCharLimit = Resolve-Option $boundParams 'SpokenReplyCharLimit' $SpokenReplyCharLimit -EnvName 'MARA_SPOKEN_REPLY_CHAR_LIMIT' -SavedName 'spoken_reply_char_limit' -Type 'Int'
+$TtsChunkCharLimit = Resolve-Option $boundParams 'TtsChunkCharLimit' $TtsChunkCharLimit -EnvName 'MARA_TTS_CHUNK_CHAR_LIMIT' -SavedName 'tts_chunk_char_limit' -Type 'Int'
+$TtsStreamChunkCharLimit = Resolve-Option $boundParams 'TtsStreamChunkCharLimit' $TtsStreamChunkCharLimit -EnvName 'MARA_TTS_STREAM_CHUNK_CHAR_LIMIT' -SavedName 'tts_stream_chunk_char_limit' -Type 'Int'
+$TtsStreamPrebufferSeconds = Resolve-Option $boundParams 'TtsStreamPrebufferSeconds' $TtsStreamPrebufferSeconds -EnvName 'MARA_TTS_STREAM_PREBUFFER_SECONDS' -SavedName 'tts_stream_prebuffer_seconds' -Type 'Double'
+$TtsStreamPrebufferMaxSeconds = Resolve-Option $boundParams 'TtsStreamPrebufferMaxSeconds' $TtsStreamPrebufferMaxSeconds -EnvName 'MARA_TTS_STREAM_PREBUFFER_MAX_SECONDS' -SavedName 'tts_stream_prebuffer_max_seconds' -Type 'Double'
+$TtsStreamUrl = Resolve-Option $boundParams 'TtsStreamUrl' $TtsStreamUrl -EnvName 'MARA_TTS_STREAM_URL'
+$AsyncAckGraceSeconds = Resolve-Option $boundParams 'AsyncAckGraceSeconds' $AsyncAckGraceSeconds -EnvName 'MARA_ASYNC_ACK_GRACE_SECONDS' -SavedName 'async_ack_grace_seconds' -Type 'Double'
+$AsyncAckText = Resolve-Option $boundParams 'AsyncAckText' $AsyncAckText -EnvName 'MARA_ASYNC_ACK_TEXT' -SavedName 'async_ack_text'
+$AsyncAckPhrases = Resolve-Option $boundParams 'AsyncAckPhrases' $AsyncAckPhrases -EnvName 'MARA_ASYNC_ACK_PHRASES' -SavedName 'async_ack_phrases' -SavedKeepBlank
+$AsyncFollowupInitialDelaySeconds = Resolve-Option $boundParams 'AsyncFollowupInitialDelaySeconds' $AsyncFollowupInitialDelaySeconds -EnvName 'MARA_ASYNC_FOLLOWUP_INITIAL_DELAY_SECONDS' -SavedName 'async_followup_initial_delay_seconds' -Type 'Double'
+$AsyncFollowupPollSeconds = Resolve-Option $boundParams 'AsyncFollowupPollSeconds' $AsyncFollowupPollSeconds -EnvName 'MARA_ASYNC_FOLLOWUP_POLL_SECONDS' -SavedName 'async_followup_poll_seconds' -Type 'Double'
+$AsyncFollowupMaxAttempts = Resolve-Option $boundParams 'AsyncFollowupMaxAttempts' $AsyncFollowupMaxAttempts -EnvName 'MARA_ASYNC_FOLLOWUP_MAX_ATTEMPTS' -SavedName 'async_followup_max_attempts' -Type 'Int'
+$VoiceInboxPath = Resolve-Option $boundParams 'VoiceInboxPath' $VoiceInboxPath -EnvName 'MARA_VOICE_INBOX_PATH' -SavedName 'voice_inbox_path'
+$VoiceInboxPollSeconds = Resolve-Option $boundParams 'VoiceInboxPollSeconds' $VoiceInboxPollSeconds -EnvName 'MARA_VOICE_INBOX_POLL_SECONDS' -SavedName 'voice_inbox_poll_seconds' -Type 'Double'
+$AgentSessionId = Resolve-Option $boundParams 'AgentSessionId' $AgentSessionId -EnvName 'MARA_AGENT_SESSION_ID' -SavedName 'agent_session_id'
+$HermesSessionId = Resolve-Option $boundParams 'HermesSessionId' $HermesSessionId -EnvName 'MARA_HERMES_SESSION_ID' -SavedName 'hermes_session_id'
+$OpenClawSessionId = Resolve-Option $boundParams 'OpenClawSessionId' $OpenClawSessionId -EnvName 'MARA_OPENCLAW_SESSION_ID' -SavedName 'openclaw_session_id'
+$AgentSessionHistoryPath = Resolve-Option $boundParams 'AgentSessionHistoryPath' $AgentSessionHistoryPath -EnvName 'MARA_AGENT_SESSION_HISTORY_PATH' -SavedName 'agent_session_history_path'
+$AgentSessionHistoryMessages = Resolve-Option $boundParams 'AgentSessionHistoryMessages' $AgentSessionHistoryMessages -EnvName 'MARA_AGENT_SESSION_HISTORY_MESSAGES' -SavedName 'agent_session_history_messages' -Type 'Int'
+$HermesCommand = Resolve-Option $boundParams 'HermesCommand' $HermesCommand -EnvName 'MARA_HERMES_COMMAND' -SavedName 'hermes_command'
+$ActiveAgent = Resolve-Option $boundParams 'ActiveAgent' $ActiveAgent -EnvName 'MARA_ACTIVE_AGENT' -SavedName 'active_agent'
+$OpenClawBaseUrl = Resolve-Option $boundParams 'OpenClawBaseUrl' $OpenClawBaseUrl -EnvName 'MARA_OPENCLAW_BASE_URL' -SavedName 'openclaw_base_url'
+$OpenClawModel = Resolve-Option $boundParams 'OpenClawModel' $OpenClawModel -EnvName 'MARA_OPENCLAW_MODEL' -SavedName 'openclaw_model'
+$OpenClawTimeoutSeconds = Resolve-Option $boundParams 'OpenClawTimeoutSeconds' $OpenClawTimeoutSeconds -EnvName 'MARA_OPENCLAW_TIMEOUT' -SavedName 'openclaw_timeout_seconds' -Type 'Double'
+$VoiceReferencePath = Resolve-Option $boundParams 'VoiceReferencePath' $VoiceReferencePath -EnvName 'MARA_VOICE_REFERENCE_PATH' -SavedName 'voice_reference_path'
+$VoiceReferenceText = Resolve-Option $boundParams 'VoiceReferenceText' $VoiceReferenceText -EnvName 'MARA_VOICE_REFERENCE_TEXT' -SavedName 'voice_reference_text'
 
-if (-not $PSBoundParameters.ContainsKey('TtsDevice') -and (Test-EnvOption "MARA_TTS_DEVICE")) {
-    $TtsDevice = Get-EnvOption "MARA_TTS_DEVICE"
-}
-
-if (-not $PSBoundParameters.ContainsKey('SshTimeoutSeconds') -and (Test-EnvOption "MARA_SSH_TIMEOUT")) {
-    $SshTimeoutSeconds = [double](Get-EnvOption "MARA_SSH_TIMEOUT")
-}
-
-if (-not $PSBoundParameters.ContainsKey('SshConnectTimeoutSeconds') -and (Test-EnvOption "MARA_SSH_CONNECT_TIMEOUT")) {
-    $SshConnectTimeoutSeconds = [double](Get-EnvOption "MARA_SSH_CONNECT_TIMEOUT")
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsTimeoutSeconds') -and (Test-EnvOption "MARA_TTS_TIMEOUT")) {
-    $TtsTimeoutSeconds = [double](Get-EnvOption "MARA_TTS_TIMEOUT")
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsInferenceTimesteps') -and (Test-EnvOption "MARA_TTS_INFERENCE_TIMESTEPS")) {
-    $TtsInferenceTimesteps = [int](Get-EnvOption "MARA_TTS_INFERENCE_TIMESTEPS")
-}
-
-if (-not $PSBoundParameters.ContainsKey('StatusIntervalSeconds') -and (Test-EnvOption "MARA_STATUS_INTERVAL")) {
-    $StatusIntervalSeconds = [double](Get-EnvOption "MARA_STATUS_INTERVAL")
-}
-
-if (-not $PSBoundParameters.ContainsKey('SpokenReplyCharLimit') -and (Test-EnvOption "MARA_SPOKEN_REPLY_CHAR_LIMIT")) {
-    $SpokenReplyCharLimit = [int](Get-EnvOption "MARA_SPOKEN_REPLY_CHAR_LIMIT")
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsChunkCharLimit') -and (Test-EnvOption "MARA_TTS_CHUNK_CHAR_LIMIT")) {
-    $TtsChunkCharLimit = [int](Get-EnvOption "MARA_TTS_CHUNK_CHAR_LIMIT")
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsStreamChunkCharLimit') -and (Test-EnvOption "MARA_TTS_STREAM_CHUNK_CHAR_LIMIT")) {
-    $TtsStreamChunkCharLimit = [int](Get-EnvOption "MARA_TTS_STREAM_CHUNK_CHAR_LIMIT")
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsStreamPrebufferSeconds') -and (Test-EnvOption "MARA_TTS_STREAM_PREBUFFER_SECONDS")) {
-    $TtsStreamPrebufferSeconds = [double](Get-EnvOption "MARA_TTS_STREAM_PREBUFFER_SECONDS")
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsStreamUrl') -and (Test-EnvOption "MARA_TTS_STREAM_URL")) {
-    $TtsStreamUrl = Get-EnvOption "MARA_TTS_STREAM_URL"
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsStreaming') -and -not $NoTtsStreaming -and (Test-EnvOption "MARA_TTS_STREAMING")) {
+# --- Boolean switches need bespoke handling for their -No* counterparts ---
+if (-not $boundParams.ContainsKey('TtsStreaming') -and -not $NoTtsStreaming -and (Test-EnvOption "MARA_TTS_STREAMING")) {
     $TtsStreaming = Get-EnvBool "MARA_TTS_STREAMING"
 }
-
-if (-not $PSBoundParameters.ContainsKey('HermesCommand') -and (Test-EnvOption "MARA_HERMES_COMMAND")) {
-    $HermesCommand = Get-EnvOption "MARA_HERMES_COMMAND"
-}
-
-if (-not $PSBoundParameters.ContainsKey('ActiveAgent') -and (Test-EnvOption "MARA_ACTIVE_AGENT")) {
-    $ActiveAgent = Get-EnvOption "MARA_ACTIVE_AGENT"
-}
-
-if (-not $PSBoundParameters.ContainsKey('OpenClawBaseUrl') -and (Test-EnvOption "MARA_OPENCLAW_BASE_URL")) {
-    $OpenClawBaseUrl = Get-EnvOption "MARA_OPENCLAW_BASE_URL"
-}
-
-if (-not $PSBoundParameters.ContainsKey('OpenClawModel') -and (Test-EnvOption "MARA_OPENCLAW_MODEL")) {
-    $OpenClawModel = Get-EnvOption "MARA_OPENCLAW_MODEL"
-}
-
-if (-not $PSBoundParameters.ContainsKey('OpenClawTimeoutSeconds') -and (Test-EnvOption "MARA_OPENCLAW_TIMEOUT")) {
-    $OpenClawTimeoutSeconds = [double](Get-EnvOption "MARA_OPENCLAW_TIMEOUT")
-}
-
-if (-not $PSBoundParameters.ContainsKey('VoiceReferencePath') -and (Test-EnvOption "MARA_VOICE_REFERENCE_PATH")) {
-    $VoiceReferencePath = Get-EnvOption "MARA_VOICE_REFERENCE_PATH"
-}
-
-if (-not $PSBoundParameters.ContainsKey('VoiceReferenceText') -and (Test-EnvOption "MARA_VOICE_REFERENCE_TEXT")) {
-    $VoiceReferenceText = Get-EnvOption "MARA_VOICE_REFERENCE_TEXT"
-}
-
-if (-not $PSBoundParameters.ContainsKey('AudioDevice') -and (Test-SavedOption "audio_device")) {
-    $AudioDevice = [string]$savedConfig.audio_device
-}
-
-if (-not $PSBoundParameters.ContainsKey('CaptureDir') -and (Test-SavedOption "capture_dir")) {
-    $CaptureDir = [string]$savedConfig.capture_dir
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsDevice') -and (Test-SavedOption "tts_device")) {
-    $savedTtsDevice = [string]$savedConfig.tts_device
-    if (-not [string]::IsNullOrWhiteSpace($savedTtsDevice)) {
-        $TtsDevice = $savedTtsDevice
-    }
-}
-
-if (-not $PSBoundParameters.ContainsKey('SshTimeoutSeconds') -and (Test-SavedOption "ssh_timeout_seconds")) {
-    $SshTimeoutSeconds = [double]$savedConfig.ssh_timeout_seconds
-}
-
-if (-not $PSBoundParameters.ContainsKey('SshConnectTimeoutSeconds') -and (Test-SavedOption "ssh_connect_timeout_seconds")) {
-    $SshConnectTimeoutSeconds = [double]$savedConfig.ssh_connect_timeout_seconds
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsTimeoutSeconds') -and (Test-SavedOption "tts_timeout_seconds")) {
-    $TtsTimeoutSeconds = [double]$savedConfig.tts_timeout_seconds
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsInferenceTimesteps') -and (Test-SavedOption "tts_inference_timesteps")) {
-    $TtsInferenceTimesteps = [int]$savedConfig.tts_inference_timesteps
-}
-
-if (-not $PSBoundParameters.ContainsKey('StatusIntervalSeconds') -and (Test-SavedOption "status_interval_seconds")) {
-    $StatusIntervalSeconds = [double]$savedConfig.status_interval_seconds
-}
-
-if (-not $PSBoundParameters.ContainsKey('SpokenReplyCharLimit') -and (Test-SavedOption "spoken_reply_char_limit")) {
-    $SpokenReplyCharLimit = [int]$savedConfig.spoken_reply_char_limit
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsChunkCharLimit') -and (Test-SavedOption "tts_chunk_char_limit")) {
-    $TtsChunkCharLimit = [int]$savedConfig.tts_chunk_char_limit
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsStreamChunkCharLimit') -and (Test-SavedOption "tts_stream_chunk_char_limit")) {
-    $TtsStreamChunkCharLimit = [int]$savedConfig.tts_stream_chunk_char_limit
-}
-
-if (-not $PSBoundParameters.ContainsKey('TtsStreamPrebufferSeconds') -and (Test-SavedOption "tts_stream_prebuffer_seconds")) {
-    $TtsStreamPrebufferSeconds = [double]$savedConfig.tts_stream_prebuffer_seconds
-}
-
 if ($NoTtsStreaming) {
     $TtsStreaming = $false
 }
-elseif (-not $PSBoundParameters.ContainsKey('TtsStreaming') -and (Test-SavedOption "tts_streaming")) {
+elseif (-not $boundParams.ContainsKey('TtsStreaming') -and (Test-SavedOption "tts_streaming")) {
     $TtsStreaming = [bool]$savedConfig.tts_streaming
 }
 
-if (-not $PSBoundParameters.ContainsKey('HermesCommand') -and (Test-SavedOption "hermes_command")) {
-    $savedHermesCommand = [string]$savedConfig.hermes_command
-    if (-not [string]::IsNullOrWhiteSpace($savedHermesCommand)) {
-        $HermesCommand = $savedHermesCommand
-    }
+if (-not $boundParams.ContainsKey('TtsStreamPrebufferDynamic') -and -not $NoTtsStreamPrebufferDynamic -and (Test-EnvOption "MARA_TTS_STREAM_PREBUFFER_DYNAMIC")) {
+    $TtsStreamPrebufferDynamic = Get-EnvBool "MARA_TTS_STREAM_PREBUFFER_DYNAMIC"
+}
+if ($NoTtsStreamPrebufferDynamic) {
+    $TtsStreamPrebufferDynamic = $false
+}
+elseif (-not $boundParams.ContainsKey('TtsStreamPrebufferDynamic') -and (Test-SavedOption "tts_stream_prebuffer_dynamic")) {
+    $TtsStreamPrebufferDynamic = [bool]$savedConfig.tts_stream_prebuffer_dynamic
 }
 
-if (-not $PSBoundParameters.ContainsKey('ActiveAgent') -and (Test-SavedOption "active_agent")) {
-    $savedActiveAgent = [string]$savedConfig.active_agent
-    if (-not [string]::IsNullOrWhiteSpace($savedActiveAgent)) {
-        $ActiveAgent = $savedActiveAgent
-    }
+if (-not $boundParams.ContainsKey('AsyncAgentReplies') -and -not $NoAsyncAgentReplies -and (Test-EnvOption "MARA_ASYNC_AGENT_REPLIES")) {
+    $AsyncAgentReplies = Get-EnvBool "MARA_ASYNC_AGENT_REPLIES"
+}
+if ($NoAsyncAgentReplies) {
+    $AsyncAgentReplies = $false
+}
+elseif (-not $boundParams.ContainsKey('AsyncAgentReplies') -and (Test-SavedOption "async_agent_replies")) {
+    $AsyncAgentReplies = [bool]$savedConfig.async_agent_replies
 }
 
-if (-not $PSBoundParameters.ContainsKey('OpenClawBaseUrl') -and (Test-SavedOption "openclaw_base_url")) {
-    $savedOpenClawBaseUrl = [string]$savedConfig.openclaw_base_url
-    if (-not [string]::IsNullOrWhiteSpace($savedOpenClawBaseUrl)) {
-        $OpenClawBaseUrl = $savedOpenClawBaseUrl
-    }
+if (-not $boundParams.ContainsKey('AsyncAckAgent') -and -not $NoAsyncAckAgent -and (Test-EnvOption "MARA_ASYNC_ACK_AGENT")) {
+    $AsyncAckAgent = Get-EnvBool "MARA_ASYNC_ACK_AGENT"
+}
+if ($NoAsyncAckAgent) {
+    $AsyncAckAgent = $false
+}
+elseif (-not $boundParams.ContainsKey('AsyncAckAgent') -and (Test-SavedOption "async_ack_agent")) {
+    $AsyncAckAgent = [bool]$savedConfig.async_ack_agent
 }
 
-if (-not $PSBoundParameters.ContainsKey('OpenClawModel') -and (Test-SavedOption "openclaw_model")) {
-    $savedOpenClawModel = [string]$savedConfig.openclaw_model
-    if (-not [string]::IsNullOrWhiteSpace($savedOpenClawModel)) {
-        $OpenClawModel = $savedOpenClawModel
-    }
+if (-not $boundParams.ContainsKey('AsyncFollowup') -and -not $NoAsyncFollowup -and (Test-EnvOption "MARA_ASYNC_FOLLOWUP_ENABLED")) {
+    $AsyncFollowup = Get-EnvBool "MARA_ASYNC_FOLLOWUP_ENABLED"
+}
+if ($NoAsyncFollowup) {
+    $AsyncFollowup = $false
+}
+elseif (-not $boundParams.ContainsKey('AsyncFollowup') -and (Test-SavedOption "async_followup_enabled")) {
+    $AsyncFollowup = [bool]$savedConfig.async_followup_enabled
 }
 
-if (-not $PSBoundParameters.ContainsKey('OpenClawTimeoutSeconds') -and (Test-SavedOption "openclaw_timeout_seconds")) {
-    $OpenClawTimeoutSeconds = [double]$savedConfig.openclaw_timeout_seconds
+if (-not $boundParams.ContainsKey('AgentSessionPersistence') -and -not $NoAgentSessionPersistence -and (Test-EnvOption "MARA_AGENT_SESSION_PERSISTENCE")) {
+    $AgentSessionPersistence = Get-EnvBool "MARA_AGENT_SESSION_PERSISTENCE"
+}
+if ($NoAgentSessionPersistence) {
+    $AgentSessionPersistence = $false
+}
+elseif (-not $boundParams.ContainsKey('AgentSessionPersistence') -and (Test-SavedOption "agent_session_persistence")) {
+    $AgentSessionPersistence = [bool]$savedConfig.agent_session_persistence
 }
 
 $ActiveAgent = $ActiveAgent.Trim().ToLowerInvariant()
@@ -409,26 +420,15 @@ if ($ActiveAgent -notin @("hermes", "openclaw")) {
     throw "ActiveAgent must be 'hermes' or 'openclaw'."
 }
 
-if (-not $PSBoundParameters.ContainsKey('VoiceReferencePath') -and (Test-SavedOption "voice_reference_path")) {
-    $savedVoiceReferencePath = [string]$savedConfig.voice_reference_path
-    if (-not [string]::IsNullOrWhiteSpace($savedVoiceReferencePath)) {
-        $VoiceReferencePath = $savedVoiceReferencePath
-    }
-}
-
-if (-not $PSBoundParameters.ContainsKey('VoiceReferenceText') -and (Test-SavedOption "voice_reference_text")) {
-    $savedVoiceReferenceText = [string]$savedConfig.voice_reference_text
-    if (-not [string]::IsNullOrWhiteSpace($savedVoiceReferenceText)) {
-        $VoiceReferenceText = $savedVoiceReferenceText
-    }
-}
-
-if (-not $PSBoundParameters.ContainsKey('RegenerateVoiceReference') -and (Test-SavedOption "regenerate_voice_reference")) {
+if (-not $boundParams.ContainsKey('RegenerateVoiceReference') -and (Test-SavedOption "regenerate_voice_reference")) {
     $RegenerateVoiceReference = [bool]$savedConfig.regenerate_voice_reference
     $regenerateVoiceReferenceFromSavedConfig = [bool]$savedConfig.regenerate_voice_reference
 }
 
 $resolvedTtsStreamUrl = if ($TtsStreamUrl) { $TtsStreamUrl } else { "http://127.0.0.1:8000/tts/stream" }
+$resolvedAgentSessionHistoryPath = if ($AgentSessionHistoryPath) { $AgentSessionHistoryPath } else { Join-Path $repoRoot "config\mara_agent_sessions.json" }
+$resolvedHermesSessionId = if ($HermesSessionId) { $HermesSessionId } else { "$AgentSessionId-hermes" }
+$resolvedOpenClawSessionId = if ($OpenClawSessionId) { $OpenClawSessionId } else { "$AgentSessionId-openclaw" }
 
 function Get-TtsHealth {
     try {
@@ -1017,10 +1017,32 @@ $listenerArguments = @(
     ([string]$TtsStreamChunkCharLimit),
     "--tts-stream-prebuffer-seconds",
     ([string]$TtsStreamPrebufferSeconds),
+    "--tts-stream-prebuffer-max-seconds",
+    ([string]$TtsStreamPrebufferMaxSeconds),
+    "--async-ack-grace-seconds",
+    ([string]$AsyncAckGraceSeconds),
+    "--async-followup-initial-delay-seconds",
+    ([string]$AsyncFollowupInitialDelaySeconds),
+    "--async-followup-poll-seconds",
+    ([string]$AsyncFollowupPollSeconds),
+    "--async-followup-max-attempts",
+    ([string]$AsyncFollowupMaxAttempts),
+    "--voice-inbox-poll-seconds",
+    ([string]$VoiceInboxPollSeconds),
     "--active-agent",
     $ActiveAgent,
     "--agent-route-state-path",
     $resolvedAgentRouteStatePath,
+    "--agent-session-id",
+    $AgentSessionId,
+    "--hermes-session-id",
+    $resolvedHermesSessionId,
+    "--openclaw-session-id",
+    $resolvedOpenClawSessionId,
+    "--agent-session-history-path",
+    $resolvedAgentSessionHistoryPath,
+    "--agent-session-history-messages",
+    ([string]$AgentSessionHistoryMessages),
     "--openclaw-base-url",
     $OpenClawBaseUrl,
     "--openclaw-model",
@@ -1034,6 +1056,53 @@ if ($TtsStreaming) {
 }
 else {
     $listenerArguments += "--no-tts-streaming"
+}
+
+if ($TtsStreamPrebufferDynamic) {
+    $listenerArguments += "--tts-stream-prebuffer-dynamic"
+}
+else {
+    $listenerArguments += "--no-tts-stream-prebuffer-dynamic"
+}
+
+if ($AsyncAgentReplies) {
+    $listenerArguments += "--async-agent-replies"
+}
+else {
+    $listenerArguments += "--no-async-agent-replies"
+}
+
+if ($AsyncFollowup) {
+    $listenerArguments += "--async-followup"
+}
+else {
+    $listenerArguments += "--no-async-followup"
+}
+
+if ($AgentSessionPersistence) {
+    $listenerArguments += "--agent-session-persistence"
+}
+else {
+    $listenerArguments += "--no-agent-session-persistence"
+}
+
+if ($AsyncAckAgent) {
+    $listenerArguments += "--async-ack-agent"
+}
+else {
+    $listenerArguments += "--no-async-ack-agent"
+}
+
+if ($AsyncAckText) {
+    $listenerArguments += @("--async-ack-text", $AsyncAckText)
+}
+
+if ($AsyncAckPhrases) {
+    $listenerArguments += @("--async-ack-phrases", $AsyncAckPhrases)
+}
+
+if ($VoiceInboxPath) {
+    $listenerArguments += @("--voice-inbox-path", $VoiceInboxPath)
 }
 
 if ($HermesCommand) {

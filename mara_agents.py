@@ -4,11 +4,12 @@ from dataclasses import dataclass
 import json
 import logging
 import os
+from pathlib import Path
 from queue import Empty, Queue
 import shlex
 import subprocess
 import time
-from threading import Thread
+from threading import RLock, Thread
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
@@ -23,10 +24,28 @@ AGENT_HERMES = "hermes"
 AGENT_OPENCLAW = "openclaw"
 VALID_AGENT_IDS = (AGENT_HERMES, AGENT_OPENCLAW)
 
+BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_ACTIVE_AGENT = os.getenv("MARA_ACTIVE_AGENT", AGENT_HERMES)
 DEFAULT_OPENCLAW_BASE_URL = os.getenv("MARA_OPENCLAW_BASE_URL", "http://192.168.0.65:8645/v1")
 DEFAULT_OPENCLAW_MODEL = os.getenv("MARA_OPENCLAW_MODEL", "gemini 3.1 pro")
 DEFAULT_OPENCLAW_API_KEY_ENV = "MARA_OPENCLAW_API_KEY"
+DEFAULT_AGENT_SESSION_ID = os.getenv("MARA_AGENT_SESSION_ID", "voice-session")
+DEFAULT_HERMES_SESSION_ID = os.getenv("MARA_HERMES_SESSION_ID", "")
+DEFAULT_OPENCLAW_SESSION_ID = os.getenv("MARA_OPENCLAW_SESSION_ID", "")
+_DEFAULT_AGENT_SESSION_HISTORY_PATH_TEXT = str(BASE_DIR / "config" / "mara_agent_sessions.json")
+DEFAULT_AGENT_SESSION_HISTORY_PATH = Path(
+    os.getenv("MARA_AGENT_SESSION_HISTORY_PATH") or _DEFAULT_AGENT_SESSION_HISTORY_PATH_TEXT
+)
+DEFAULT_AGENT_SESSION_HISTORY_MESSAGES = int(os.getenv("MARA_AGENT_SESSION_HISTORY_MESSAGES", "20"))
+DEFAULT_AGENT_SESSION_ENTRY_CHAR_LIMIT = int(os.getenv("MARA_AGENT_SESSION_ENTRY_CHAR_LIMIT", "2000"))
+
+_SESSION_LOCK = RLock()
+
+
+def _parse_bool(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _parse_optional_timeout(value: str | None, default: float | None) -> float | None:
@@ -42,6 +61,7 @@ def _parse_optional_timeout(value: str | None, default: float | None) -> float |
 
 
 DEFAULT_OPENCLAW_TIMEOUT_SECONDS = _parse_optional_timeout(os.getenv("MARA_OPENCLAW_TIMEOUT"), 600.0)
+DEFAULT_AGENT_SESSION_PERSISTENCE = _parse_bool(os.getenv("MARA_AGENT_SESSION_PERSISTENCE"), True)
 
 
 class AgentError(RuntimeError):
@@ -62,6 +82,12 @@ class AgentSettings:
     openclaw_model: str = DEFAULT_OPENCLAW_MODEL
     openclaw_timeout_seconds: float | None = DEFAULT_OPENCLAW_TIMEOUT_SECONDS
     openclaw_api_key: str = ""
+    agent_session_id: str = DEFAULT_AGENT_SESSION_ID
+    hermes_session_id: str = DEFAULT_HERMES_SESSION_ID
+    openclaw_session_id: str = DEFAULT_OPENCLAW_SESSION_ID
+    agent_session_history_path: Path = DEFAULT_AGENT_SESSION_HISTORY_PATH
+    agent_session_history_messages: int = DEFAULT_AGENT_SESSION_HISTORY_MESSAGES
+    agent_session_persistence: bool = DEFAULT_AGENT_SESSION_PERSISTENCE
 
 
 @dataclass(slots=True)
@@ -101,6 +127,146 @@ def openclaw_key_configured(settings: AgentSettings | None = None) -> bool:
 def _emit(status_callback: StatusCallback | None, status: str, message: str, details: dict[str, Any] | None = None) -> None:
     if status_callback is not None:
         status_callback(status, message, details)
+
+
+def _agent_session_id(settings: AgentSettings) -> str:
+    return (settings.agent_session_id or DEFAULT_AGENT_SESSION_ID).strip() or "voice-session"
+
+
+def default_agent_session_id_for_agent(base_session_id: str, agent_id: str) -> str:
+    base = (base_session_id or DEFAULT_AGENT_SESSION_ID).strip() or "voice-session"
+    normalized_agent = normalize_agent_id(agent_id)
+    return f"{base}-{normalized_agent}"
+
+
+def agent_session_id_for_agent(settings: AgentSettings, agent_id: str) -> str:
+    normalized_agent = normalize_agent_id(agent_id)
+    if normalized_agent == AGENT_HERMES:
+        configured = (settings.hermes_session_id or DEFAULT_HERMES_SESSION_ID).strip()
+    else:
+        configured = (settings.openclaw_session_id or DEFAULT_OPENCLAW_SESSION_ID).strip()
+    return configured or default_agent_session_id_for_agent(_agent_session_id(settings), normalized_agent)
+
+
+def _session_message_limit(settings: AgentSettings) -> int:
+    return max(0, int(settings.agent_session_history_messages))
+
+
+def _trim_session_content(text: str) -> str:
+    normalized = " ".join(str(text).split())
+    if len(normalized) <= DEFAULT_AGENT_SESSION_ENTRY_CHAR_LIMIT:
+        return normalized
+    return normalized[:DEFAULT_AGENT_SESSION_ENTRY_CHAR_LIMIT].rstrip() + "..."
+
+
+def _load_session_payload(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"version": 1, "sessions": {}}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"version": 1, "sessions": {}}
+    if not isinstance(payload, dict):
+        return {"version": 1, "sessions": {}}
+    sessions = payload.get("sessions")
+    if not isinstance(sessions, dict):
+        payload["sessions"] = {}
+    payload.setdefault("version", 1)
+    return payload
+
+
+def _coerce_history_messages(raw_messages: object) -> list[dict[str, str]]:
+    if not isinstance(raw_messages, list):
+        return []
+    messages: list[dict[str, str]] = []
+    for item in raw_messages:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        content = str(item.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        messages.append({"role": role, "content": _trim_session_content(content)})
+    return messages
+
+
+def load_session_messages(settings: AgentSettings, agent_id: str) -> list[dict[str, str]]:
+    if not settings.agent_session_persistence:
+        return []
+    normalized_agent = normalize_agent_id(agent_id)
+    session_id = agent_session_id_for_agent(settings, normalized_agent)
+    legacy_session_id = _agent_session_id(settings)
+    path = Path(settings.agent_session_history_path)
+    with _SESSION_LOCK:
+        payload = _load_session_payload(path)
+        sessions = payload.get("sessions") if isinstance(payload.get("sessions"), dict) else {}
+        session = sessions.get(session_id) if isinstance(sessions.get(session_id), dict) else {}
+        messages = _coerce_history_messages(session.get(normalized_agent) if isinstance(session, dict) else [])
+        if not messages and legacy_session_id != session_id:
+            legacy_session = sessions.get(legacy_session_id) if isinstance(sessions.get(legacy_session_id), dict) else {}
+            messages = _coerce_history_messages(
+                legacy_session.get(normalized_agent) if isinstance(legacy_session, dict) else []
+            )
+    limit = _session_message_limit(settings)
+    if limit <= 0:
+        return []
+    return messages[-limit:]
+
+
+def record_session_turn(settings: AgentSettings, agent_id: str, user_text: str, assistant_text: str) -> None:
+    if not settings.agent_session_persistence:
+        return
+    limit = _session_message_limit(settings)
+    if limit <= 0:
+        return
+    normalized_agent = normalize_agent_id(agent_id)
+    session_id = agent_session_id_for_agent(settings, normalized_agent)
+    path = Path(settings.agent_session_history_path)
+    with _SESSION_LOCK:
+        payload = _load_session_payload(path)
+        sessions = payload.setdefault("sessions", {})
+        if not isinstance(sessions, dict):
+            sessions = {}
+            payload["sessions"] = sessions
+        session = sessions.setdefault(session_id, {})
+        if not isinstance(session, dict):
+            session = {}
+            sessions[session_id] = session
+        messages = _coerce_history_messages(session.get(normalized_agent))
+        messages.extend(
+            [
+                {"role": "user", "content": _trim_session_content(user_text)},
+                {"role": "assistant", "content": _trim_session_content(assistant_text)},
+            ]
+        )
+        session[normalized_agent] = messages[-limit:]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        tmp_path.replace(path)
+
+
+def _openclaw_messages(input_text: str, settings: AgentSettings) -> list[dict[str, str]]:
+    history = load_session_messages(settings, AGENT_OPENCLAW)
+    return [*history, {"role": "user", "content": input_text}]
+
+
+def _hermes_input_text(input_text: str, settings: AgentSettings) -> str:
+    history = load_session_messages(settings, AGENT_HERMES)
+    if not history:
+        return input_text
+
+    lines = [
+        f'Continue Mara Voice session "{agent_session_id_for_agent(settings, AGENT_HERMES)}".',
+        "Use the prior turns only as context. Answer the latest user request directly.",
+        "",
+        "Prior turns:",
+    ]
+    for message in history:
+        role = "User" if message["role"] == "user" else "Mara"
+        lines.append(f"{role}: {message['content']}")
+    lines.extend(["", "Latest user request:", input_text])
+    return "\n".join(lines)
 
 
 def _openclaw_url(base_url: str, path: str) -> str:
@@ -173,7 +339,14 @@ def _ask_hermes_ssh(
     if not settings.hermes_command:
         raise AgentError("Hermes command is not configured.")
 
-    remote_command = f"{settings.hermes_command} -z {shlex.quote(input_text)}"
+    agent_input = _hermes_input_text(input_text, settings)
+    session_prefix = ""
+    if settings.agent_session_persistence:
+        session_prefix = (
+            f"MARA_AGENT_SESSION_ID={shlex.quote(agent_session_id_for_agent(settings, AGENT_HERMES))} "
+            f"MARA_AGENT_NAME={shlex.quote(AGENT_HERMES)} "
+        )
+    remote_command = f"{session_prefix}{settings.hermes_command} -z {shlex.quote(agent_input)}"
     command = [
         "ssh",
         "-T",
@@ -197,7 +370,7 @@ def _ask_hermes_ssh(
     )
     logger.info(
         "Sending %d characters to Hermes on %s (timeout=%s)",
-        len(input_text),
+        len(agent_input),
         settings.ssh_target,
         format_timeout(settings.ssh_timeout_seconds),
     )
@@ -272,6 +445,10 @@ def _ask_hermes_ssh(
         logger.debug("Hermes stderr: %s", stderr_text)
 
     logger.info("Hermes replied in %.2fs with %d characters", elapsed, len(stdout_text))
+    try:
+        record_session_turn(settings, AGENT_HERMES, input_text, stdout_text)
+    except Exception as exc:
+        logger.warning("Could not persist Hermes session history: %s", exc)
     return AgentReply(AGENT_HERMES, agent_display_name(AGENT_HERMES), stdout_text, elapsed)
 
 
@@ -309,8 +486,9 @@ def _ask_openclaw_http(
     http = session or requests.Session()
     payload = {
         "model": settings.openclaw_model,
-        "messages": [{"role": "user", "content": input_text}],
+        "messages": _openclaw_messages(input_text, settings),
         "stream": False,
+        "user": agent_session_id_for_agent(settings, AGENT_OPENCLAW),
     }
     url = _openclaw_url(settings.openclaw_base_url, "chat/completions")
 
@@ -384,6 +562,10 @@ def _ask_openclaw_http(
 
     reply = _extract_openclaw_reply(response_payload)
     logger.info("OpenClaw replied in %.2fs with %d characters", elapsed, len(reply))
+    try:
+        record_session_turn(settings, AGENT_OPENCLAW, input_text, reply)
+    except Exception as exc:
+        logger.warning("Could not persist OpenClaw session history: %s", exc)
     return AgentReply(AGENT_OPENCLAW, agent_display_name(AGENT_OPENCLAW), reply, elapsed)
 
 

@@ -14,6 +14,10 @@ venv/
 
 config/mara_voice.local.json
 config/mara_agent_route.runtime.json
+config/mara_voice_inbox.jsonl
+config/mara_voice_inbox.jsonl.offset
+config/mara_agent_sessions.json
+config/mara_agent_sessions.json.tmp
 models/mara_voice_reference.wav
 models/mara_voice_reference.wav.json
 models/openclaw_voice_reference.wav
