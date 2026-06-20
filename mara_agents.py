@@ -722,10 +722,22 @@ def guardrail_review(agent_id: str, text: str) -> tuple[str, list[str]]:
     wrong_names = _GUARDRAIL_WRONG_NAMES.get(normalized, ())
     if wrong_names:
         correct = _GUARDRAIL_DISPLAY_NAME[normalized]
-        names = "|".join(re.escape(name) for name in wrong_names)
-        pattern = re.compile(
+        names = "|".join(re.escape(name) for name in sorted(wrong_names, key=len, reverse=True))
+        first_person_pattern = re.compile(
             r"(?P<lead>\b(?:I am still|I am|I'm|Im|my name is)"
             r"(?:\s+(?:actually|really|just|still|literally|currently|now|technically))?\s+)"
+            r"(?P<name>" + names + r")\b(?!['\w])",
+            re.I,
+        )
+        curly_first_person_pattern = re.compile(
+            r"(?P<lead>\bI’m"
+            r"(?:\s+(?:actually|really|just|still|literally|currently|now|technically))?\s+)"
+            r"(?P<name>" + names + r")\b(?!['\w])",
+            re.I,
+        )
+        here_pattern = re.compile(r"(?P<name>\b(?:" + names + r"))(?P<trail>\s+here\b)", re.I)
+        this_is_pattern = re.compile(
+            r"(?P<lead>\b(?:this is|it is|it's|its|call me|you can call me)\s+)"
             r"(?P<name>" + names + r")\b(?!['\w])",
             re.I,
         )
@@ -734,7 +746,13 @@ def guardrail_review(agent_id: str, text: str) -> tuple[str, list[str]]:
             violations.append(f"self-identified as {match.group('name')}")
             return match.group("lead") + correct
 
-        corrected = pattern.sub(_replace, corrected)
+        def _replace_here(match: "re.Match[str]") -> str:
+            violations.append(f"self-identified as {match.group('name')}")
+            return correct + match.group("trail")
+
+        for pattern in (first_person_pattern, curly_first_person_pattern, this_is_pattern):
+            corrected = pattern.sub(_replace, corrected)
+        corrected = here_pattern.sub(_replace_here, corrected)
 
     if any(fab.search(corrected) for fab in _FABRICATION_PATTERNS):
         violations.append("fabricated cross-agent relay")

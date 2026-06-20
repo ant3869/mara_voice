@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import time
@@ -8,6 +9,9 @@ from dataclasses import asdict
 from pathlib import Path
 from threading import RLock
 from typing import Any
+from urllib.error import URLError
+from urllib.request import Request as _UrlRequest
+from urllib.request import urlopen
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -105,6 +109,22 @@ class AgentRouteUpdate(BaseModel):
 app = FastAPI(title="Mara Voice GUI")
 
 
+def _push_voice_styles_to_tts(options: dict[str, Any]) -> None:
+    payload = {k: v for k, v in options.items() if k in ("hermes_voice_style", "openclaw_voice_style") and v}
+    if not payload:
+        return
+    tts_base = TTS_HEALTH_URL.rsplit("/", 1)[0]
+    try:
+        req = _UrlRequest(
+            f"{tts_base}/voice-style",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        urlopen(req, timeout=3.0)
+    except (URLError, OSError):
+        pass
+
+
 def current_tts_health(timeout_seconds: float = 2.0) -> dict[str, Any]:
     return check_tts_health(
         PipelineConfig(tts_health_url=TTS_HEALTH_URL),
@@ -139,7 +159,14 @@ def current_agent_route_payload() -> dict[str, Any]:
 def index() -> FileResponse:
     if not INDEX_HTML.exists():
         raise HTTPException(status_code=404, detail=f"Missing GUI file: {INDEX_HTML}")
-    return FileResponse(INDEX_HTML)
+    return FileResponse(
+        INDEX_HTML,
+        headers={
+            "Cache-Control": "no-store, max-age=0, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/api/state")
@@ -175,6 +202,7 @@ def api_save_options(update: OptionsUpdate) -> dict[str, Any]:
         existing = load_options(CONFIG_PATH)
         existing.update(update.options)
         save_options(existing, CONFIG_PATH)
+        _push_voice_styles_to_tts(update.options)
         if "active_agent" in update.options:
             update_agent_route_state(
                 AGENT_ROUTE_STATE_PATH,

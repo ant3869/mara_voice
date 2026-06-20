@@ -58,6 +58,42 @@ OPTION_SCHEMA: dict[str, dict[str, Any]] = {
     "voice_reference_path": {"type": "str", "default": "", "restart_required": True},
     "voice_reference_text": {"type": "str", "default": "", "restart_required": True},
     "regenerate_voice_reference": {"type": "bool", "default": False, "restart_required": True},
+    "hermes_voice_profile": {
+        "type": "str",
+        "default": "mara_default",
+        "choices": (
+            "mara_default",
+            "mara_warm_expressive",
+            "mara_professional",
+            "mara_casual",
+            "mara_soft_soothing",
+            "custom",
+        ),
+        "restart_required": True,
+    },
+    "hermes_voice_style": {
+        "type": "str",
+        "default": "A clear adult female speaking voice with a warm lower tone, calm conversational pace, natural articulation, and no humming, sighing, singing, or nonverbal sounds",
+        "restart_required": True,
+    },
+    "openclaw_voice_profile": {
+        "type": "str",
+        "default": "openclaw_default",
+        "choices": (
+            "openclaw_default",
+            "openclaw_deep_authoritative",
+            "openclaw_technical",
+            "openclaw_energetic",
+            "openclaw_crisp",
+            "custom",
+        ),
+        "restart_required": True,
+    },
+    "openclaw_voice_style": {
+        "type": "str",
+        "default": "A clear adult male speaking voice with a steady lower register, calm conversational pace, natural articulation, and no humming, sighing, singing, or nonverbal sounds",
+        "restart_required": True,
+    },
 }
 
 

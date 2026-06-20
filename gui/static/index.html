@@ -4,612 +4,1488 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <title>Mara · Mission Control</title>
+  <title>Mara - Mission Control</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #030605;
-      --bg-grid: rgba(52, 211, 153, 0.045);
-      --panel: #070d0b;
-      --panel-soft: #0b1311;
-      --panel-elevated: #0f1916;
-      --input: #040908;
-      --line: #1c2c27;
-      --line-strong: #345147;
-      --text: #eafff7;
-      --muted: #8aa49d;
-      --muted-dim: #5f756e;
-      --accent: #34d399;
-      --accent-strong: #8ff0c6;
-      --warn: #f6c453;
-      --bad: #ff7a90;
-      --good: #6ee7a8;
-      --info: #7dd3fc;
-      --violet: #c4b5fd;
-      --hermes: #8ff0c6;
-      --claw: #67e8f9;
-      --user: #f6c453;
-      --shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+      --bg: #08090c;
+      --rail: #101116;
+      --rail-deep: #0b0c10;
+      --surface: #15161b;
+      --surface-soft: #181920;
+      --surface-raised: #1d1e25;
+      --input: #0e0f14;
+      --line: #262832;
+      --line-soft: #1f2028;
+      --text: #f6f5fb;
+      --muted: #8b8ea3;
+      --muted-dim: #5f6274;
+      --green: #22d38b;
+      --green-soft: #0d3b2b;
+      --blue: #3b96ff;
+      --blue-soft: #102440;
+      --violet: #7c5cff;
+      --violet-soft: #211a43;
+      --yellow: #ffbe1a;
+      --yellow-soft: #33240a;
+      --red: #ff5b6c;
+      --red-soft: #35141a;
+      --pink: #ff4fa0;
+      --claw: #48d6ff;
+      --hermes: #22d38b;
+      --user: #ffbe1a;
+      --shadow: 0 16px 40px rgba(0, 0, 0, 0.36);
       --mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, ui-monospace, monospace;
+      --sans: "Segoe UI", Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     }
+
     * { box-sizing: border-box; }
-    ::selection { background: rgba(52, 211, 153, 0.32); color: var(--text); }
+    ::selection { background: rgba(124, 92, 255, 0.38); color: var(--text); }
+
     body {
       margin: 0;
-      background:
-        linear-gradient(var(--bg-grid) 1px, transparent 1px) 0 0 / 100% 34px,
-        linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px) 0 0 / 34px 100%,
-        radial-gradient(1200px 600px at 80% -10%, rgba(52, 211, 153, 0.07), transparent 60%),
-        var(--bg);
+      min-height: 100vh;
+      background: var(--bg);
       color: var(--text);
-      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: var(--sans);
       font-size: 14px;
       line-height: 1.45;
     }
+
+    button, input, select, textarea { font: inherit; }
+    button { appearance: none; }
+    h1, h2, h3, p { margin: 0; }
+
     .mono { font-family: var(--mono); }
-    header {
+    .app-shell {
+      min-height: 100vh;
+      display: block;
+    }
+
+    .sidebar {
+      display: none;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      grid-template-rows: auto 1fr auto;
+      gap: 24px;
+      padding: 16px 10px;
+      background: var(--rail);
+      border-right: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 10px 14px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      color: #08090c;
+      background: #f4f5fb;
+      font-weight: 800;
+      font-size: 13px;
+    }
+
+    .brand-copy {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .brand-title {
+      font-size: 15px;
+      font-weight: 750;
+      letter-spacing: 0;
+      color: var(--text);
+    }
+
+    .brand-subtitle {
+      color: var(--muted-dim);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .nav-list {
+      display: grid;
+      align-content: start;
+      gap: 6px;
+    }
+
+    .nav-item {
+      width: 100%;
+      min-height: 38px;
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 0 10px;
+      color: var(--muted);
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      cursor: pointer;
+      text-align: left;
+      font-weight: 650;
+    }
+
+    .nav-item:hover { color: var(--text); background: #171820; }
+    .nav-item.active {
+      color: var(--text);
+      background: var(--surface-soft);
+      border-color: var(--line-soft);
+    }
+
+    .nav-glyph {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: 1px solid currentColor;
+      display: inline-block;
+      position: relative;
+      opacity: 0.86;
+    }
+
+    .nav-glyph.chat::after {
+      content: "";
+      position: absolute;
+      left: 3px;
+      right: 3px;
+      top: 4px;
+      height: 2px;
+      background: currentColor;
+      box-shadow: 0 4px 0 currentColor;
+    }
+
+    .nav-glyph.log::after {
+      content: "";
+      position: absolute;
+      inset: 4px 3px;
+      border-top: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+    }
+
+    .nav-glyph.settings::after {
+      content: "";
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      left: 4px;
+      top: 4px;
+    }
+
+    .nav-count {
+      min-width: 24px;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      display: inline-grid;
+      place-items: center;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .sidebar-footer {
+      display: grid;
+      gap: 8px;
+      padding: 12px 10px 2px;
+      border-top: 1px solid var(--line-soft);
+    }
+
+    .footer-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 30px;
+      color: var(--muted);
+      font-weight: 650;
+    }
+
+    .claw-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--pink);
+      box-shadow:
+        9px 0 0 -5px var(--pink),
+        -9px 0 0 -5px var(--pink),
+        0 0 14px rgba(255, 79, 160, 0.42);
+    }
+
+    .workspace {
+      min-width: 0;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      min-height: 62px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 12px 20px 12px 24px;
+      background: rgba(9, 10, 14, 0.96);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(10px);
+    }
+
+    .page-title {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .page-title h1 {
+      font-size: 17px;
+      font-weight: 780;
+      letter-spacing: 0;
+      color: var(--text);
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .connection-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .traffic {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border: 1px solid rgba(255, 120, 24, 0.35);
+      border-radius: 8px;
+      background: #1c1208;
+    }
+
+    .traffic span {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .traffic .green { background: var(--green); }
+    .traffic .yellow { background: var(--yellow); }
+    .traffic .red { background: var(--red); }
+
+    .led {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted-dim);
+      box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.03);
+      flex: none;
+    }
+
+    .led.good { background: var(--green); box-shadow: 0 0 14px rgba(34, 211, 139, 0.62); }
+    .led.warn { background: var(--yellow); box-shadow: 0 0 14px rgba(255, 190, 26, 0.55); }
+    .led.bad { background: var(--red); box-shadow: 0 0 14px rgba(255, 91, 108, 0.55); }
+
+    .page-tabs {
+      position: sticky;
+      top: 69px;
+      z-index: 18;
+      min-height: 74px;
+      display: flex;
+      align-items: end;
+      gap: 32px;
+      padding: 0 30px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(8, 9, 12, 0.96);
+      backdrop-filter: blur(10px);
+      overflow-x: auto;
+    }
+
+    .page-tab {
+      min-height: 58px;
+      padding: 0 0 16px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      position: relative;
+      font-size: 16px;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+
+    .page-tab:hover { background: transparent; color: var(--text); }
+    .page-tab.active { color: var(--text); }
+    .page-tab.active::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -1px;
+      height: 2px;
+      background: var(--green);
+    }
+
+    .page-tab .nav-count {
+      min-width: 22px;
+      min-height: 20px;
+      font-size: 11px;
+      padding: 0 7px;
+    }
+
+    .pill {
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 11px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--surface-soft);
+      color: var(--muted);
+      white-space: nowrap;
+      font-size: 12px;
+      font-weight: 680;
+    }
+
+    .pill.mini { min-height: 24px; padding: 0 8px; font-size: 11px; }
+    .pill.good { color: var(--green); border-color: rgba(34, 211, 139, 0.32); background: var(--green-soft); }
+    .pill.bad { color: var(--red); border-color: rgba(255, 91, 108, 0.34); background: var(--red-soft); }
+    .pill.warn { color: var(--yellow); border-color: rgba(255, 190, 26, 0.36); background: var(--yellow-soft); }
+    .pill.violet { color: #b5a6ff; border-color: rgba(124, 92, 255, 0.34); background: var(--violet-soft); }
+
+    .btn,
+    button {
+      min-height: 36px;
+      padding: 0 13px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--surface-soft);
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 720;
+      font-size: 13px;
+    }
+
+    button:hover { border-color: #393b49; background: #20212a; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    button.primary { color: #07110c; border-color: rgba(34, 211, 139, 0.56); background: var(--green); }
+    button.secondary { color: #b7bbd2; background: #12131a; }
+    button.icon-text { display: inline-flex; align-items: center; gap: 8px; }
+    button:focus-visible,
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: 2px solid rgba(34, 211, 139, 0.62);
+      outline-offset: 2px;
+      border-color: rgba(34, 211, 139, 0.58);
+    }
+
+    .button-icon {
+      width: 15px;
+      height: 15px;
+      display: inline-block;
+      position: relative;
+    }
+
+    .button-icon.refresh::before {
+      content: "";
+      position: absolute;
+      inset: 2px;
+      border: 1.7px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+    }
+
+    .button-icon.play::before {
+      content: "";
+      position: absolute;
+      left: 4px;
+      top: 2px;
+      border-left: 9px solid currentColor;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+    }
+
+    .page-content {
+      padding: 24px 30px 38px;
+      min-width: 0;
+    }
+
+    .page {
+      display: none;
+      min-width: 0;
+    }
+
+    .page.active {
+      display: grid;
+      gap: 22px;
+    }
+
+    .page-head {
+      min-height: 72px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
-      padding: 12px 18px;
-      border-bottom: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(11, 19, 17, 0.95), rgba(7, 13, 11, 0.92));
-      backdrop-filter: blur(6px);
-      position: sticky;
-      top: 0;
-      z-index: 10;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line-soft);
     }
-    .brand { display: flex; align-items: center; gap: 12px; }
-    .led {
-      width: 11px; height: 11px; border-radius: 50%;
-      background: var(--muted-dim);
-      box-shadow: 0 0 0 3px rgba(255,255,255,0.02);
-      flex: none;
-    }
-    .led.good { background: var(--good); box-shadow: 0 0 10px 1px rgba(110,231,168,0.7); }
-    .led.warn { background: var(--warn); box-shadow: 0 0 10px 1px rgba(246,196,83,0.6); }
-    .led.bad { background: var(--bad); box-shadow: 0 0 10px 1px rgba(255,122,144,0.6); animation: pulse 1.4s infinite; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-    h1, h2, h3, p { margin: 0; }
-    h1 {
-      font-size: 16px; font-weight: 700; letter-spacing: 2px;
-      text-transform: uppercase; font-family: var(--mono);
-    }
-    h1 .dim { color: var(--muted-dim); }
-    h2 {
-      font-size: 12px; font-weight: 700; color: var(--muted);
-      text-transform: uppercase; letter-spacing: 1.5px; font-family: var(--mono);
-    }
-    main {
+
+    .page-head-copy {
       display: grid;
-      grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.7fr);
-      gap: 14px; padding: 14px; max-width: 1560px; margin: 0 auto; align-items: start;
+      gap: 4px;
+      min-width: 0;
     }
-    section {
-      position: relative;
-      background: var(--panel);
+
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 720;
+    }
+
+    .eyebrow .mark {
+      width: 16px;
+      height: 16px;
+      border: 2px solid currentColor;
+      border-radius: 4px;
+      box-shadow: inset 5px -5px 0 -3px currentColor;
+    }
+
+    .page-head h2 {
+      font-size: 22px;
+      font-weight: 820;
+      letter-spacing: 0;
+      color: var(--text);
+    }
+
+    .muted { color: var(--muted); }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .metric {
+      min-height: 78px;
+      padding: 14px 15px;
       border: 1px solid var(--line);
-      border-radius: 6px;
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      display: grid;
+      gap: 7px;
+      align-content: center;
+    }
+
+    .metric .label {
+      color: var(--muted-dim);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .metric .value {
+      color: var(--text);
+      font-size: 20px;
+      font-weight: 820;
+      overflow-wrap: anywhere;
+    }
+
+    .metric.telemetry .value { color: var(--blue); }
+    .metric .value.num small { color: var(--muted-dim); font-size: 12px; font-weight: 650; }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
       box-shadow: var(--shadow);
       overflow: hidden;
     }
-    section::before, section::after {
-      content: ""; position: absolute; width: 9px; height: 9px; pointer-events: none; z-index: 2;
-      border-color: var(--line-strong); border-style: solid; border-width: 0;
-    }
-    section::before { top: 0; left: 0; border-top-width: 1px; border-left-width: 1px; }
-    section::after { bottom: 0; right: 0; border-bottom-width: 1px; border-right-width: 1px; }
-    .section-head {
-      display: flex; align-items: center; justify-content: space-between; gap: 12px;
-      padding: 11px 14px; border-bottom: 1px solid var(--line);
-      background: linear-gradient(180deg, var(--panel-soft), transparent);
-    }
-    .section-body { padding: 14px; }
-    .stack { display: grid; gap: 14px; align-content: start; }
 
-    .status-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-    .metric {
-      min-height: 78px; padding: 11px 12px;
-      border: 1px solid var(--line); border-radius: 6px;
-      background: linear-gradient(180deg, var(--panel-elevated), rgba(0,0,0,0.18));
-      position: relative;
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 51px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line-soft);
+      background: var(--surface-soft);
     }
-    .metric .label {
-      color: var(--muted); font-size: 11px; letter-spacing: 1px;
-      text-transform: uppercase; margin-bottom: 6px; font-family: var(--mono);
-    }
-    .metric .value { font-size: 18px; font-weight: 650; overflow-wrap: anywhere; }
-    .metric .value.num { font-family: var(--mono); font-weight: 700; }
-    .metric .value.num small { color: var(--muted-dim); font-size: 12px; font-weight: 500; }
-    .metric.telemetry .value { color: var(--accent-strong); }
 
-    .pill {
-      display: inline-flex; align-items: center; min-height: 26px; padding: 0 11px;
-      border-radius: 999px; background: var(--panel-soft); color: var(--muted);
-      border: 1px solid var(--line); white-space: nowrap; font-family: var(--mono);
-      font-size: 12px; letter-spacing: 0.5px;
+    .panel-head h3 {
+      font-size: 14px;
+      font-weight: 780;
+      color: var(--text);
     }
-    .pill.good { color: var(--good); border-color: #235d42; background: #082d1f; }
-    .pill.bad { color: var(--bad); border-color: #6b2632; background: #341016; }
-    .pill.warn { color: var(--warn); border-color: #6b4c18; background: #302309; }
 
-    .agent-log-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .panel-body { padding: 16px; }
+    .current-action .value {
+      color: #cfd2df;
+      font-size: 15px;
+      font-weight: 650;
+      overflow-wrap: anywhere;
+    }
+
+    .agent-log-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
     .chat-panel {
-      min-height: 360px; display: grid; grid-template-rows: auto minmax(0, 1fr);
-      border: 1px solid var(--line); border-radius: 6px; background: var(--panel-elevated); overflow: hidden;
+      min-height: 420px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      overflow: hidden;
+      box-shadow: var(--shadow);
     }
-    .chat-panel.hermes { border-color: rgba(143, 240, 198, 0.32); box-shadow: inset 0 0 30px rgba(143,240,198,0.04); }
-    .chat-panel.openclaw { border-color: rgba(103, 232, 249, 0.32); box-shadow: inset 0 0 30px rgba(103,232,249,0.04); }
+
+    .chat-panel.hermes { border-color: rgba(34, 211, 139, 0.26); }
+    .chat-panel.openclaw { border-color: rgba(72, 214, 255, 0.28); }
+
     .chat-head {
-      display: flex; align-items: center; justify-content: space-between; gap: 10px;
-      padding: 9px 12px; border-bottom: 1px solid var(--line); background: rgba(255, 255, 255, 0.02);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 50px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line-soft);
+      background: #171820;
     }
-    .chat-head h3 { margin: 0; font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; font-family: var(--mono); }
+
+    .chat-head h3 {
+      font-size: 15px;
+      font-weight: 820;
+    }
+
     .chat-panel.hermes .chat-head h3 { color: var(--hermes); }
     .chat-panel.openclaw .chat-head h3 { color: var(--claw); }
-    .pill.mini { min-height: 21px; padding: 0 8px; font-size: 11px; }
+
     .chat-log {
-      min-height: 300px; max-height: 480px; overflow: auto; padding: 10px 12px;
-      display: grid; align-content: start; gap: 8px;
+      max-height: 560px;
+      min-height: 360px;
+      overflow: auto;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      align-content: start;
     }
+
     .chat-line {
-      display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px;
-      padding: 8px; border-radius: 6px; background: rgba(255,255,255,0.012);
-      border-left: 2px solid transparent;
+      display: grid;
+      grid-template-columns: 96px minmax(0, 1fr);
+      gap: 10px;
+      padding: 10px;
+      border-radius: 8px;
+      background: #111219;
+      border: 1px solid var(--line-soft);
+      border-left: 3px solid transparent;
     }
+
     .chat-line.user { border-left-color: var(--user); }
     .chat-line.mara.hermes { border-left-color: var(--hermes); }
     .chat-line.mara.openclaw { border-left-color: var(--claw); }
-    .speaker { display: grid; gap: 3px; align-content: start; min-width: 0; font-size: 11px; color: var(--muted); text-transform: uppercase; font-family: var(--mono); }
-    .speaker-name { font-weight: 700; overflow-wrap: anywhere; letter-spacing: 0.5px; }
+
+    .speaker {
+      display: grid;
+      gap: 3px;
+      align-content: start;
+      min-width: 0;
+      color: var(--muted-dim);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .speaker-name {
+      color: var(--muted);
+      font-weight: 780;
+      overflow-wrap: anywhere;
+      text-transform: uppercase;
+    }
+
     .chat-line.user .speaker-name { color: var(--user); }
     .chat-line.mara.hermes .speaker-name { color: var(--hermes); }
     .chat-line.mara.openclaw .speaker-name { color: var(--claw); }
-    .chat-time { color: var(--muted-dim); font-size: 10px; text-transform: none; }
-    .chat-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .chat-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
-    .tag {
-      display: inline-flex; align-items: center; min-height: 19px; padding: 0 7px;
-      border: 1px solid var(--line); border-radius: 4px; color: var(--muted);
-      font-size: 10px; letter-spacing: 0.5px; background: rgba(0, 0, 0, 0.2); font-family: var(--mono); text-transform: uppercase;
-    }
-    .tag.async { color: var(--violet); border-color: rgba(196, 181, 253, 0.36); }
-    .tag.source { color: var(--info); border-color: rgba(125, 211, 252, 0.32); }
-    .tag.timing { color: var(--accent); border-color: rgba(52, 211, 153, 0.34); }
-    .tag.ack { color: var(--warn); border-color: rgba(246, 196, 83, 0.32); }
-    .empty { margin: 0; color: var(--muted-dim); font-size: 13px; font-family: var(--mono); }
+    .chat-time { color: var(--muted-dim); font-size: 10px; }
+    .chat-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #e8e8ef; font-size: 13px; }
 
-    .kw { font-weight: 700; }
-    .kw-good { color: var(--good); } .kw-warn { color: var(--warn); } .kw-bad { color: var(--bad); }
-    .kw-talk { color: var(--info); } .kw-hermes { color: var(--hermes); } .kw-claw { color: var(--claw); } .kw-mara { color: var(--violet); }
+    .chat-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .tag {
+      min-height: 22px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 8px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #0d0e13;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .tag.async { color: #b5a6ff; border-color: rgba(124, 92, 255, 0.36); background: var(--violet-soft); }
+    .tag.source { color: var(--blue); border-color: rgba(59, 150, 255, 0.34); background: var(--blue-soft); }
+    .tag.timing { color: var(--green); border-color: rgba(34, 211, 139, 0.34); background: var(--green-soft); }
+    .tag.ack { color: var(--yellow); border-color: rgba(255, 190, 26, 0.34); background: var(--yellow-soft); }
+
+    .empty {
+      margin: 0;
+      color: var(--muted-dim);
+      font-size: 13px;
+    }
+
+    .kw { font-weight: 780; }
+    .kw-good { color: var(--green); }
+    .kw-warn { color: var(--yellow); }
+    .kw-bad { color: var(--red); }
+    .kw-talk { color: var(--blue); }
+    .kw-hermes { color: var(--hermes); }
+    .kw-claw { color: var(--claw); }
+    .kw-mara { color: #b5a6ff; }
 
     .status-chip {
-      display: inline-flex; align-items: center; min-height: 21px; padding: 0 8px;
-      border-radius: 4px; border: 1px solid var(--line); background: var(--panel-soft);
-      font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; white-space: nowrap; font-family: var(--mono);
+      min-height: 24px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 9px;
+      border-radius: 7px;
+      border: 1px solid var(--line);
+      background: #101118;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
     }
-    .status-chip.good { color: var(--good); border-color: #235d42; background: #082d1f; }
-    .status-chip.bad { color: var(--bad); border-color: #6b2632; background: #341016; }
-    .status-chip.warn { color: var(--warn); border-color: #6b4c18; background: #302309; }
-    .status-chip.talk { color: var(--info); border-color: rgba(125, 211, 252, 0.32); background: #062433; }
-    .status-chip.user { color: var(--user); border-color: rgba(246, 196, 83, 0.32); background: #2f2208; }
-    .status-chip.mara { color: var(--violet); border-color: rgba(196, 181, 253, 0.32); background: #211932; }
 
-    tr.event-bad td { background: rgba(255, 122, 144, 0.06); }
-    tr.event-warn td { background: rgba(246, 196, 83, 0.045); }
-    tr.event-good td { background: rgba(110, 231, 168, 0.035); }
-    tr.event-talk td { background: rgba(125, 211, 252, 0.04); }
-    .events { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    .events th, .events td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; }
-    .events th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; background: var(--panel-soft); font-family: var(--mono); }
-    .events td { overflow-wrap: anywhere; }
+    .status-chip.good { color: var(--green); border-color: rgba(34, 211, 139, 0.32); background: var(--green-soft); }
+    .status-chip.bad { color: var(--red); border-color: rgba(255, 91, 108, 0.34); background: var(--red-soft); }
+    .status-chip.warn { color: var(--yellow); border-color: rgba(255, 190, 26, 0.36); background: var(--yellow-soft); }
+    .status-chip.talk { color: var(--blue); border-color: rgba(59, 150, 255, 0.34); background: var(--blue-soft); }
+    .status-chip.user { color: var(--user); border-color: rgba(255, 190, 26, 0.34); background: var(--yellow-soft); }
+    .status-chip.mara { color: #b5a6ff; border-color: rgba(124, 92, 255, 0.34); background: var(--violet-soft); }
+
+    .events-wrap {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .events {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    .events th,
+    .events td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line-soft);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    .events th {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      background: var(--surface-soft);
+    }
+
+    .events td { overflow-wrap: anywhere; color: #d7d8e2; }
     .events td.time { color: var(--muted-dim); font-family: var(--mono); font-size: 12px; }
-    .events .time { width: 184px; }
-    .events .status { width: 116px; }
-    .events .agent { width: 92px; }
-    .turn { border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: var(--panel-elevated); }
-    .turn h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; margin-bottom: 8px; font-family: var(--mono); }
-    .turn pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; }
+    .events .time { width: 190px; }
+    .events .status { width: 132px; }
+    .events .agent { width: 96px; }
+    tr.event-bad td { background: rgba(255, 91, 108, 0.06); }
+    tr.event-warn td { background: rgba(255, 190, 26, 0.045); }
+    tr.event-good td { background: rgba(34, 211, 139, 0.04); }
+    tr.event-talk td { background: rgba(59, 150, 255, 0.045); }
 
-    form { display: grid; gap: 12px; }
-    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; font-family: var(--mono); }
-    input, select, textarea, button { font: inherit; }
-    input, select, textarea {
-      width: 100%; min-height: 36px; border: 1px solid var(--line); border-radius: 5px;
-      padding: 7px 9px; background: var(--input); color: var(--text); font-family: var(--mono); font-size: 13px;
+    .turn {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #111219;
     }
-    input:focus, select:focus, textarea:focus, button:focus-visible {
-      outline: 2px solid rgba(52, 211, 153, 0.65); outline-offset: 2px; border-color: var(--line-strong);
+
+    .turn h3 {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      margin-bottom: 8px;
     }
-    textarea { min-height: 68px; resize: vertical; text-transform: none; }
+
+    .turn pre {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: #d7d8e2;
+    }
+
+    .error-text { color: var(--red); }
+
+    .tabs-shell {
+      display: grid;
+      gap: 18px;
+    }
+
+    .tab-row {
+      display: flex;
+      align-items: center;
+      gap: 26px;
+      padding: 0 0 14px;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+    }
+
+    .tab-button {
+      min-height: 42px;
+      padding: 0 0 12px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      position: relative;
+      font-size: 16px;
+      white-space: nowrap;
+    }
+
+    .tab-button:hover { background: transparent; color: var(--text); }
+    .tab-button.active { color: var(--text); }
+    .tab-button.active::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -15px;
+      height: 2px;
+      background: var(--green);
+    }
+
+    .tab-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: 1px solid currentColor;
+      display: inline-block;
+    }
+
+    .settings-pane { display: none; }
+    .settings-pane.active { display: grid; gap: 14px; }
+
+    form { display: grid; gap: 18px; }
+
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .settings-card {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .settings-card.wide { grid-column: 1 / -1; }
+
+    .settings-card h3 {
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    label {
+      display: grid;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: var(--input);
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    textarea {
+      min-height: 84px;
+      resize: vertical;
+    }
+
+    .help {
+      color: var(--muted-dim);
+      font-size: 12px;
+      line-height: 1.35;
+      font-weight: 520;
+    }
+
     .check-row {
-      display: flex; align-items: center; justify-content: space-between; gap: 12px;
-      padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px;
-      background: var(--panel-elevated); color: var(--text); text-transform: none; font-family: inherit;
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #111219;
+      color: var(--text);
     }
-    .check-row input { width: 20px; min-height: 20px; accent-color: var(--accent); }
-    .actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
-    button {
-      min-height: 36px; border: 1px solid var(--accent); background: var(--accent);
-      color: #02120c; border-radius: 5px; padding: 0 14px; cursor: pointer; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.5px; font-size: 12px; font-family: var(--mono);
+
+    .check-row > span {
+      display: grid;
+      gap: 3px;
     }
-    button.secondary { color: var(--accent-strong); background: var(--input); }
-    button:disabled { opacity: 0.6; cursor: not-allowed; }
-    .note { color: var(--muted); font-size: 12px; font-family: var(--mono); }
-    .help { color: var(--muted-dim); font-size: 11px; line-height: 1.35; text-transform: none; font-family: "Segoe UI", system-ui, sans-serif; letter-spacing: 0; }
-    .check-row > span { display: grid; gap: 3px; }
-    .check-row > span > span:first-child { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+
+    .check-row input {
+      width: 42px;
+      min-height: 24px;
+      accent-color: var(--green);
+      flex: none;
+    }
+
     .route-row {
-      display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: end;
-      padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-elevated);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 12px;
+      align-items: end;
     }
+
     .wide { grid-column: 1 / -1; }
-    .error-text { color: var(--bad); overflow-wrap: anywhere; }
-    @media (max-width: 1100px) {
-      main { grid-template-columns: 1fr; }
+
+    .settings-actions {
+      position: sticky;
+      bottom: 0;
+      z-index: 12;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 0 0;
+      background: linear-gradient(180deg, rgba(8, 9, 12, 0), var(--bg) 28%);
+    }
+
+    .save-note {
+      color: var(--muted);
+      margin-right: auto;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 1180px) {
       .status-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .agent-log-grid { grid-template-columns: 1fr; }
+      .settings-grid { grid-template-columns: 1fr; }
     }
-    @media (max-width: 640px) {
-      header { align-items: flex-start; flex-direction: column; }
-      main { padding: 10px; }
-      .status-strip, .form-grid { grid-template-columns: 1fr; }
+
+    @media (max-width: 860px) {
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+        position: relative;
+      }
+      .page-tabs {
+        position: relative;
+        top: auto;
+        min-height: 64px;
+        padding: 0 14px;
+        gap: 24px;
+      }
+      .page-content { padding: 18px 14px 30px; }
+      .page-head { align-items: flex-start; flex-direction: column; }
       .route-row { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 640px) {
+      .status-strip { grid-template-columns: 1fr; }
       .chat-line { grid-template-columns: 1fr; }
-      .chat-log { max-height: 380px; }
-      .events .time { width: 120px; }
-      .events .status { width: 96px; }
-      .events .agent { width: 76px; }
+      .chat-log { max-height: 420px; }
+      .events .time { width: 118px; }
+      .events .status { width: 104px; }
+      .events .agent { display: none; }
+      .events th.agent,
+      .events td.agent { display: none; }
+      .actions { justify-content: flex-start; }
+      .traffic { display: none; }
     }
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <span class="led" id="led"></span>
-      <div>
-        <h1>MARA <span class="dim">// MISSION CONTROL</span></h1>
-        <p class="note" id="subtitle">Loading runtime state...</p>
+  <div class="app-shell">
+    <aside class="sidebar" aria-hidden="true">
+      <div class="brand">
+        <span class="brand-mark">M</span>
+        <div class="brand-copy">
+          <strong class="brand-title">Mission Control</strong>
+          <span class="brand-subtitle">Mara voice runtime</span>
+        </div>
       </div>
-    </div>
-    <div class="actions">
-      <span class="pill" id="updated">No updates</span>
-      <span class="pill" id="pipeline">Pipeline ?</span>
-      <span class="pill" id="connection">Connecting</span>
-      <button class="secondary" id="startPipeline" type="button" title="Run start_mara to bring up the TTS server and voice listener.">Start Pipeline</button>
-      <button class="secondary" id="refresh" type="button">Refresh</button>
-    </div>
-  </header>
 
-  <main>
-    <div class="stack">
-      <section>
-        <div class="section-head">
-          <h2>Telemetry</h2>
-          <span class="pill" id="eventCount">0 events</span>
-        </div>
-        <div class="section-body stack">
-          <div class="status-strip">
-            <div class="metric">
-              <div class="label">Agent State</div>
-              <div class="value" id="currentStatus">UNKNOWN</div>
-            </div>
-            <div class="metric">
-              <div class="label">Active Agent</div>
-              <div class="value" id="agentStatus">Hermes</div>
-            </div>
-            <div class="metric">
-              <div class="label">TTS Server</div>
-              <div class="value" id="ttsStatus">Unknown</div>
-            </div>
-            <div class="metric">
-              <div class="label">Streaming</div>
-              <div class="value" id="streamStatus">Unknown</div>
-            </div>
-          </div>
-          <div class="status-strip">
-            <div class="metric telemetry">
-              <div class="label">Last Dictation</div>
-              <div class="value num" id="metricDictation">--</div>
-            </div>
-            <div class="metric telemetry">
-              <div class="label">Last Generation</div>
-              <div class="value num" id="metricGeneration">--</div>
-            </div>
-            <div class="metric telemetry">
-              <div class="label">Last Speech</div>
-              <div class="value num" id="metricSpeech">--</div>
-            </div>
-            <div class="metric telemetry">
-              <div class="label">Throughput</div>
-              <div class="value num" id="metricThroughput">--</div>
-            </div>
-          </div>
-          <div class="metric" style="min-height:auto">
-            <div class="label">Current Action</div>
-            <div class="value" id="currentMessage" style="font-size:14px">-</div>
-          </div>
-        </div>
-      </section>
+      <nav class="nav-list" aria-label="Primary">
+        <button class="nav-item active" data-page="dashboard" type="button">
+          <span class="nav-glyph chat"></span>
+          <span>Chat Output</span>
+          <span class="nav-count" id="navChatCountHidden">0</span>
+        </button>
+        <button class="nav-item" data-page="log" type="button">
+          <span class="nav-glyph log"></span>
+          <span>Log</span>
+          <span class="nav-count" id="navLogCountHidden">0</span>
+        </button>
+        <button class="nav-item" data-page="settings" type="button">
+          <span class="nav-glyph settings"></span>
+          <span>Settings</span>
+        </button>
+      </nav>
 
-      <section>
-        <div class="section-head">
-          <h2>Comms</h2>
-          <span class="pill mini">conversation only</span>
+      <div class="sidebar-footer">
+        <div class="footer-link"><span class="claw-dot"></span><span>OpenClaw</span></div>
+        <div class="footer-link"><span class="led" id="sidebarLed"></span><span id="sidebarConnection">Connecting</span></div>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="page-title">
+          <h1 id="pageTitle">Mara Voice</h1>
+          <p class="note" id="subtitle">Loading runtime state...</p>
         </div>
-        <div class="section-body">
-          <div class="agent-log-grid">
-            <div class="chat-panel hermes">
-              <div class="chat-head">
-                <h3>Hermes</h3>
-                <span class="pill mini" id="hermesCount">0 entries</span>
+        <div class="actions">
+          <div class="traffic" aria-hidden="true">
+            <span class="green"></span>
+            <span class="green"></span>
+            <span class="yellow"></span>
+          </div>
+          <span class="connection-status">
+            <span class="led" id="led"></span>
+            <span class="pill" id="connection">Connecting</span>
+          </span>
+          <span class="pill" id="updated">No updates</span>
+          <span class="pill" id="pipeline">Pipeline ?</span>
+          <button class="secondary icon-text" id="startPipeline" type="button" title="Start Mara voice pipeline">
+            <span class="button-icon play"></span>
+            <span>Start</span>
+          </button>
+          <button class="secondary icon-text" id="refresh" type="button" title="Refresh runtime state">
+            <span class="button-icon refresh"></span>
+            <span>Refresh</span>
+          </button>
+        </div>
+      </header>
+
+      <nav class="page-tabs" aria-label="Mara pages">
+        <button class="page-tab active" data-page="dashboard" type="button">
+          <span class="tab-icon"></span>
+          <span>Chat Output</span>
+          <span class="nav-count" id="navChatCount">0</span>
+        </button>
+        <button class="page-tab" data-page="log" type="button">
+          <span class="tab-icon"></span>
+          <span>Log</span>
+          <span class="nav-count" id="navLogCount">0</span>
+        </button>
+        <button class="page-tab" data-page="settings" type="button">
+          <span class="tab-icon"></span>
+          <span>Settings</span>
+        </button>
+      </nav>
+
+      <main class="page-content">
+        <section class="page active" id="page-dashboard">
+          <div class="page-head">
+            <div class="page-head-copy">
+              <div class="eyebrow"><span class="mark"></span><span>Mara</span></div>
+              <h2>Chat Output</h2>
+              <p class="muted">Runtime state, agent route, and the live conversation panes.</p>
+            </div>
+            <span class="pill violet" id="eventCount">0 events</span>
+          </div>
+
+          <div class="grid">
+            <div class="status-strip">
+              <div class="metric">
+                <div class="label">Agent State</div>
+                <div class="value" id="currentStatus">UNKNOWN</div>
               </div>
-              <div class="chat-log" id="hermesLog">
-                <p class="empty">No Hermes conversation yet.</p>
+              <div class="metric">
+                <div class="label">Active Agent</div>
+                <div class="value" id="agentStatus">Hermes</div>
+              </div>
+              <div class="metric">
+                <div class="label">TTS Server</div>
+                <div class="value" id="ttsStatus">Unknown</div>
+              </div>
+              <div class="metric">
+                <div class="label">Streaming</div>
+                <div class="value" id="streamStatus">Unknown</div>
               </div>
             </div>
-            <div class="chat-panel openclaw">
-              <div class="chat-head">
-                <h3>Claw</h3>
-                <span class="pill mini" id="openclawCount">0 entries</span>
+
+            <div class="status-strip">
+              <div class="metric telemetry">
+                <div class="label">Last Dictation</div>
+                <div class="value num" id="metricDictation">--</div>
               </div>
-              <div class="chat-log" id="openclawLog">
-                <p class="empty">No Claw conversation yet.</p>
+              <div class="metric telemetry">
+                <div class="label">Last Generation</div>
+                <div class="value num" id="metricGeneration">--</div>
+              </div>
+              <div class="metric telemetry">
+                <div class="label">Last Speech</div>
+                <div class="value num" id="metricSpeech">--</div>
+              </div>
+              <div class="metric telemetry">
+                <div class="label">Throughput</div>
+                <div class="value num" id="metricThroughput">--</div>
               </div>
             </div>
-            <div class="turn wide" id="errorPanel" hidden>
+
+            <div class="panel current-action">
+              <div class="panel-head">
+                <h3>Current Action</h3>
+                <span class="pill mini" id="routeStatus">Route status unknown.</span>
+              </div>
+              <div class="panel-body">
+                <div class="value" id="currentMessage">-</div>
+              </div>
+            </div>
+
+            <div class="agent-log-grid">
+              <div class="chat-panel hermes">
+                <div class="chat-head">
+                  <h3>Hermes</h3>
+                  <span class="pill mini" id="hermesCount">0 entries</span>
+                </div>
+                <div class="chat-log" id="hermesLog">
+                  <p class="empty">No Hermes conversation yet.</p>
+                </div>
+              </div>
+
+              <div class="chat-panel openclaw">
+                <div class="chat-head">
+                  <h3>Claw</h3>
+                  <span class="pill mini" id="openclawCount">0 entries</span>
+                </div>
+                <div class="chat-log" id="openclawLog">
+                  <p class="empty">No Claw conversation yet.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="turn" id="errorPanel" hidden>
               <h3>Last Error</h3>
               <pre class="error-text" id="lastError"></pre>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section>
-        <div class="section-head">
-          <h2>Event Log</h2>
-          <span class="pill mini">system / status / timing</span>
-        </div>
-        <div class="section-body" style="padding:0">
-          <table class="events">
-            <thead>
-              <tr>
-                <th class="time">Time</th>
-                <th class="status">Status</th>
-                <th class="agent">Agent</th>
-                <th>Message</th>
-              </tr>
-            </thead>
-            <tbody id="eventsBody"></tbody>
-          </table>
-        </div>
-      </section>
-    </div>
+        <section class="page" id="page-log">
+          <div class="page-head">
+            <div class="page-head-copy">
+              <div class="eyebrow"><span class="mark"></span><span>Runtime</span></div>
+              <h2>Log</h2>
+              <p class="muted">System, status, timing, and conversation events in one place.</p>
+            </div>
+            <button class="secondary icon-text" type="button" id="logRefresh">
+              <span class="button-icon refresh"></span>
+              <span>Refresh</span>
+            </button>
+          </div>
 
-    <div class="stack">
-      <section>
-        <div class="section-head">
-          <h2>Options</h2>
-          <span class="pill warn">Most changes restart</span>
-        </div>
-        <div class="section-body">
+          <div class="events-wrap">
+            <table class="events">
+              <thead>
+                <tr>
+                  <th class="time">Time</th>
+                  <th class="status">Status</th>
+                  <th class="agent">Agent</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody id="eventsBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="page" id="page-settings">
+          <div class="page-head">
+            <div class="page-head-copy">
+              <div class="eyebrow"><span class="mark"></span><span>Control</span></div>
+              <h2>Settings</h2>
+              <p class="muted">Agent, voice, async, and system controls are grouped into tabs.</p>
+            </div>
+            <span class="pill warn">Restart for most changes</span>
+          </div>
+
           <form id="optionsForm">
-            <div class="route-row wide">
-              <label>Default agent route
-                <select id="active_agent" name="active_agent" title="Agent used for voice prompts unless a one-shot route is queued.">
-                  <option value="hermes">Hermes</option>
-                  <option value="openclaw">OpenClaw</option>
-                </select>
-                <span class="help">Switches new prompts without restarting the listener.</span>
-              </label>
-              <button class="secondary" id="nextOpenClaw" type="button" title="Send only the next voice prompt to OpenClaw.">Next OpenClaw</button>
-              <button class="secondary" id="clearNextAgent" type="button" title="Clear any queued one-shot route.">Clear Next</button>
-              <span class="help wide" id="routeStatus">Route status unknown.</span>
+            <div class="tabs-shell">
+              <div class="tab-row" role="tablist" aria-label="Settings sections">
+                <button class="tab-button active" data-settings-tab="agent" type="button">
+                  <span class="tab-icon"></span>
+                  <span>Agent</span>
+                </button>
+                <button class="tab-button" data-settings-tab="voice" type="button">
+                  <span class="tab-icon"></span>
+                  <span>Voice</span>
+                </button>
+                <button class="tab-button" data-settings-tab="async" type="button">
+                  <span class="tab-icon"></span>
+                  <span>Async</span>
+                </button>
+                <button class="tab-button" data-settings-tab="system" type="button">
+                  <span class="tab-icon"></span>
+                  <span>System</span>
+                </button>
+              </div>
+
+              <div class="settings-pane active" id="settings-agent">
+                <div class="settings-grid">
+                  <div class="settings-card wide">
+                    <h3>Routing</h3>
+                    <div class="route-row">
+                      <label>Default agent route
+                        <select id="active_agent" name="active_agent" title="Agent used for voice prompts unless a one-shot route is queued.">
+                          <option value="hermes">Hermes</option>
+                          <option value="openclaw">OpenClaw</option>
+                        </select>
+                      </label>
+                      <button class="secondary" id="nextOpenClaw" type="button" title="Send only the next voice prompt to OpenClaw.">Next OpenClaw</button>
+                      <button class="secondary" id="clearNextAgent" type="button" title="Clear any queued one-shot route.">Clear Next</button>
+                    </div>
+                  </div>
+
+                  <div class="settings-card wide">
+                    <h3>OpenClaw</h3>
+                    <label>API base URL
+                      <input id="openclaw_base_url" name="openclaw_base_url" type="text" placeholder="http://192.168.0.65:8645/v1" title="OpenAI-compatible API base URL for OpenClaw.">
+                    </label>
+                    <label>Model
+                      <input id="openclaw_model" name="openclaw_model" type="text" placeholder="gemini 3.1 pro" title="Model id sent in the OpenAI-compatible request.">
+                    </label>
+                    <label>Timeout seconds
+                      <input id="openclaw_timeout_seconds" name="openclaw_timeout_seconds" type="number" min="0" max="3600" step="0.5" required title="How long to wait for the OpenClaw HTTP response.">
+                    </label>
+                  </div>
+
+                  <div class="settings-card">
+                    <h3>Sessions</h3>
+                    <label>Agent session id
+                      <input id="agent_session_id" name="agent_session_id" type="text" placeholder="voice-session" title="Stable session id reused for Hermes/OpenClaw context.">
+                    </label>
+                    <label>Hermes session id
+                      <input id="hermes_session_id" name="hermes_session_id" type="text" placeholder="voice-session-hermes" title="Stable session id sent to Hermes/Mara on every prompt.">
+                    </label>
+                    <label>OpenClaw session id
+                      <input id="openclaw_session_id" name="openclaw_session_id" type="text" placeholder="voice-session-openclaw" title="Stable user/session id sent to OpenClaw on every prompt.">
+                    </label>
+                  </div>
+
+                  <div class="settings-card">
+                    <h3>History</h3>
+                    <label class="check-row">
+                      <span>
+                        <span>Persistent agent session</span>
+                        <span class="help">Reuse per-agent context.</span>
+                      </span>
+                      <input id="agent_session_persistence" name="agent_session_persistence" type="checkbox" title="Persist and reuse per-agent conversation history.">
+                    </label>
+                    <label>Session history messages
+                      <input id="agent_session_history_messages" name="agent_session_history_messages" type="number" min="0" max="200" required title="Maximum prior user/assistant messages retained per agent session.">
+                    </label>
+                    <label>Session history path
+                      <input id="agent_session_history_path" name="agent_session_history_path" type="text" placeholder="config\mara_agent_sessions.json" title="JSON file storing persistent per-agent session history.">
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-pane" id="settings-voice">
+                <div class="settings-grid">
+                  <div class="settings-card">
+                    <h3>Streaming</h3>
+                    <label class="check-row">
+                      <span>
+                        <span>True streaming TTS</span>
+                        <span class="help">Use the streaming endpoint.</span>
+                      </span>
+                      <input id="tts_streaming" name="tts_streaming" type="checkbox" title="Turn true raw-PCM streaming on for the next launcher run.">
+                    </label>
+                    <label class="check-row">
+                      <span>
+                        <span>Dynamic streaming prebuffer</span>
+                        <span class="help">Adapt the audio buffer.</span>
+                      </span>
+                      <input id="tts_stream_prebuffer_dynamic" name="tts_stream_prebuffer_dynamic" type="checkbox" title="Adapt prebuffer/cushion to measured generation speed.">
+                    </label>
+                    <label>Prebuffer seconds (min)
+                      <input id="tts_stream_prebuffer_seconds" name="tts_stream_prebuffer_seconds" type="number" min="0" max="30" step="0.5" required title="Minimum audio buffered before streaming playback starts.">
+                    </label>
+                    <label>Prebuffer seconds (max)
+                      <input id="tts_stream_prebuffer_max_seconds" name="tts_stream_prebuffer_max_seconds" type="number" min="0" max="30" step="0.5" required title="Maximum prebuffer/cushion when dynamic prebuffering grows the buffer.">
+                    </label>
+                  </div>
+
+                  <div class="settings-card">
+                    <h3>Speech Limits</h3>
+                    <label>Spoken reply characters
+                      <input id="spoken_reply_char_limit" name="spoken_reply_char_limit" type="number" min="0" max="12000" required title="Maximum text sent to speech. 0 speaks the full reply.">
+                    </label>
+                    <label>TTS chunk characters
+                      <input id="tts_chunk_char_limit" name="tts_chunk_char_limit" type="number" min="0" max="12000" required title="Chunk size for non-streaming WAV playback.">
+                    </label>
+                    <label>Streaming chunk characters
+                      <input id="tts_stream_chunk_char_limit" name="tts_stream_chunk_char_limit" type="number" min="40" max="12000" required title="Chunk size used before calling the true streaming endpoint.">
+                    </label>
+                    <label>TTS inference steps
+                      <input id="tts_inference_timesteps" name="tts_inference_timesteps" type="number" min="1" max="50" required title="Lower is faster, higher can sound cleaner.">
+                    </label>
+                    <label>TTS timeout seconds
+                      <input id="tts_timeout_seconds" name="tts_timeout_seconds" type="number" min="0" max="3600" step="0.5" required title="How long to wait for each local TTS request.">
+                    </label>
+                  </div>
+
+                  <div class="settings-card">
+                    <h3>Device</h3>
+                    <label>TTS device
+                      <input id="tts_device" name="tts_device" type="text" placeholder="auto" title="Device used by VoxCPM.">
+                    </label>
+                    <label>Audio output device
+                      <select id="audio_device" name="audio_device" title="Where Mara's voice plays."></select>
+                    </label>
+                    <label class="check-row">
+                      <span>
+                        <span>Regenerate voice reference</span>
+                        <span class="help">Rebuild on next start.</span>
+                      </span>
+                      <input id="regenerate_voice_reference" name="regenerate_voice_reference" type="checkbox" title="Rebuild the persistent reference WAV on the next TTS server start.">
+                    </label>
+                  </div>
+
+                  <div class="settings-card wide">
+                    <h3>Voice Profiles</h3>
+                    <div class="settings-grid">
+                      <div style="display:grid;gap:10px;">
+                        <label>Mara (Hermes) profile
+                          <select id="hermes_voice_profile" name="hermes_voice_profile" title="Pick a preset or choose Custom to write your own Mara voice style."></select>
+                          <span class="help">Pick a preset to fill the style text below, or choose Custom and write your own.</span>
+                        </label>
+                        <label>Mara voice style
+                          <textarea id="hermes_voice_style" name="hermes_voice_style" title="Describes how Mara sounds — not a transcript. Saved to config and applied on next start; live server updates immediately."></textarea>
+                          <span class="help">Describes how Mara sounds. Saved and applied on restart; if the TTS server is already running the style updates immediately and the voice reference rebuilds on first use.</span>
+                        </label>
+                      </div>
+                      <div style="display:grid;gap:10px;">
+                        <label>OpenClaw profile
+                          <select id="openclaw_voice_profile" name="openclaw_voice_profile" title="Pick a preset or choose Custom to write your own OpenClaw voice style."></select>
+                          <span class="help">Pick a preset to fill the style text below, or choose Custom and write your own.</span>
+                        </label>
+                        <label>OpenClaw voice style
+                          <textarea id="openclaw_voice_style" name="openclaw_voice_style" title="Describes how OpenClaw sounds — not a transcript. Saved to config and applied on next start; live server updates immediately."></textarea>
+                          <span class="help">Describes how OpenClaw sounds. Saved and applied on restart; if the TTS server is already running the style updates immediately and the voice reference rebuilds on first use.</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="settings-card">
+                    <h3>Reference</h3>
+                    <label>Voice reference WAV path
+                      <input id="voice_reference_path" name="voice_reference_path" type="text" placeholder="models\mara_voice_reference.wav" title="Path to the persistent reference WAV.">
+                    </label>
+                    <label>Voice reference transcript
+                      <textarea id="voice_reference_text" name="voice_reference_text" placeholder="Mara is online, calm, warm, and ready to answer clearly." title="Exact transcript of the reference WAV."></textarea>
+                    </label>
+                  </div>
+
+                  <div class="settings-card wide">
+                    <div class="panel-head" style="margin:-14px -14px 0">
+                      <h3>TTS Health</h3>
+                      <span class="pill mini" id="voiceMode">Unknown</span>
+                    </div>
+                    <div class="turn">
+                      <pre id="ttsHealth">No health data yet.</pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-pane" id="settings-async">
+                <div class="settings-grid">
+                  <div class="settings-card">
+                    <h3>Async Reply Flow</h3>
+                    <label class="check-row">
+                      <span>
+                        <span>Async agent replies</span>
+                        <span class="help">Speak a quick acknowledgement first.</span>
+                      </span>
+                      <input id="async_agent_replies" name="async_agent_replies" type="checkbox" title="Run agent requests in the background after a short spoken acknowledgement.">
+                    </label>
+                    <label class="check-row">
+                      <span>
+                        <span>Agent-generated acknowledgement</span>
+                        <span class="help">Let the agent write the acknowledgement.</span>
+                      </span>
+                      <input id="async_ack_agent" name="async_ack_agent" type="checkbox" title="On = natural agent-generated acknowledgement; off = random preset phrase.">
+                    </label>
+                    <label>Ack grace seconds
+                      <input id="async_ack_grace_seconds" name="async_ack_grace_seconds" type="number" min="0" max="120" step="0.5" required title="Wait this long for the real answer before speaking an acknowledgement.">
+                    </label>
+                  </div>
+
+                  <div class="settings-card">
+                    <h3>Follow-up Polling</h3>
+                    <label class="check-row">
+                      <span>
+                        <span>Async follow-up polling</span>
+                        <span class="help">Poll for the final result.</span>
+                      </span>
+                      <input id="async_followup_enabled" name="async_followup_enabled" type="checkbox" title="Automatically poll for a final background result after deferred async replies.">
+                    </label>
+                    <label>Follow-up initial delay
+                      <input id="async_followup_initial_delay_seconds" name="async_followup_initial_delay_seconds" type="number" min="0" max="300" step="0.5" required title="Seconds before the first automatic background-result check.">
+                    </label>
+                    <label>Follow-up poll seconds
+                      <input id="async_followup_poll_seconds" name="async_followup_poll_seconds" type="number" min="1" max="600" step="0.5" required title="Seconds between automatic background-result checks.">
+                    </label>
+                    <label>Follow-up max checks
+                      <input id="async_followup_max_attempts" name="async_followup_max_attempts" type="number" min="0" max="1000" required title="Maximum checks before Mara speaks a still-waiting update.">
+                    </label>
+                  </div>
+
+                  <div class="settings-card wide">
+                    <h3>Acknowledgements</h3>
+                    <label>Acknowledgement phrases
+                      <textarea id="async_ack_phrases" name="async_ack_phrases" placeholder="On it, give me a sec.&#10;Got it, working on that now.&#10;Sure, let me look into that." title="When agent-generated acknowledgement is off, one of these is spoken at random."></textarea>
+                    </label>
+                    <label>Fallback acknowledgement text
+                      <input id="async_ack_text" name="async_ack_text" type="text" placeholder="Yeah, let me dig into that real quick." title="Used when no phrases are set above, and as the final fallback if agent generation fails.">
+                    </label>
+                  </div>
+
+                  <div class="settings-card wide">
+                    <h3>Voice Inbox</h3>
+                    <label>Voice inbox JSONL path
+                      <input id="voice_inbox_path" name="voice_inbox_path" type="text" placeholder="config\mara_voice_inbox.jsonl" title="File watched for out-of-band final replies.">
+                    </label>
+                    <label>Voice inbox poll seconds
+                      <input id="voice_inbox_poll_seconds" name="voice_inbox_poll_seconds" type="number" min="0" max="300" step="0.5" required title="How often to check the JSONL voice inbox. 0 disables it.">
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-pane" id="settings-system">
+                <div class="settings-grid">
+                  <div class="settings-card">
+                    <h3>Listener</h3>
+                    <label>Capture directory
+                      <input id="capture_dir" name="capture_dir" type="text" placeholder="Voicebox default" title="Directory watched for Voicebox WAV captures.">
+                    </label>
+                    <label>Hermes command
+                      <input id="hermes_command" name="hermes_command" type="text" placeholder="~/.local/bin/hermes" title="Remote command run over SSH.">
+                    </label>
+                    <label>Status interval seconds
+                      <input id="status_interval_seconds" name="status_interval_seconds" type="number" min="0" max="300" step="0.5" required title="How often the terminal prints still-working updates.">
+                    </label>
+                  </div>
+
+                  <div class="settings-card">
+                    <h3>SSH</h3>
+                    <label>SSH timeout seconds
+                      <input id="ssh_timeout_seconds" name="ssh_timeout_seconds" type="number" min="0" max="3600" step="0.5" required title="How long to wait for Hermes. 0 disables the response timeout.">
+                    </label>
+                    <label>SSH connect timeout
+                      <input id="ssh_connect_timeout_seconds" name="ssh_connect_timeout_seconds" type="number" min="1" max="120" step="0.5" required title="How long to wait while opening SSH.">
+                    </label>
+                  </div>
+                </div>
+              </div>
             </div>
-            <label class="check-row wide">
-              <span>
-                <span>True streaming TTS</span>
-                <span class="help">Example: on starts audio sooner using /tts/stream. Off uses the safer WAV/chunked path.</span>
-              </span>
-              <input id="tts_streaming" name="tts_streaming" type="checkbox" title="Turn true raw-PCM streaming on for the next launcher run.">
-            </label>
-            <label class="check-row wide">
-              <span>
-                <span>Dynamic streaming prebuffer</span>
-                <span class="help">Example: on grows the buffer automatically when generation is slow so long/short replies both stay clear. Off uses a fixed prebuffer.</span>
-              </span>
-              <input id="tts_stream_prebuffer_dynamic" name="tts_stream_prebuffer_dynamic" type="checkbox" title="Adapt prebuffer/cushion to measured generation speed.">
-            </label>
-            <label class="check-row wide">
-              <span>
-                <span>Async agent replies</span>
-                <span class="help">Example: speak a quick acknowledgement now, then play the final agent answer when it finishes.</span>
-              </span>
-              <input id="async_agent_replies" name="async_agent_replies" type="checkbox" title="Run agent requests in the background after a short spoken acknowledgement.">
-            </label>
-            <label class="check-row wide">
-              <span>
-                <span>Agent-generated acknowledgement</span>
-                <span class="help">Off (recommended): instant random preset phrase (below) that fills the wait. On: a natural agent-written line, but it needs its own agent round-trip so it arrives about when the answer does.</span>
-              </span>
-              <input id="async_ack_agent" name="async_ack_agent" type="checkbox" title="On = natural agent-generated acknowledgement; off = random preset phrase.">
-            </label>
-            <label class="check-row wide">
-              <span>
-                <span>Async follow-up polling</span>
-                <span class="help">Example: if the agent says background work is still running, keep checking the same session and speak the result automatically.</span>
-              </span>
-              <input id="async_followup_enabled" name="async_followup_enabled" type="checkbox" title="Automatically poll for a final background result after deferred async replies.">
-            </label>
-            <label class="check-row wide">
-              <span>
-                <span>Persistent agent session</span>
-                <span class="help">Example: reuse the same Voice Session history for Hermes/OpenClaw instead of treating each prompt as isolated.</span>
-              </span>
-              <input id="agent_session_persistence" name="agent_session_persistence" type="checkbox" title="Persist and reuse per-agent conversation history.">
-            </label>
-            <label class="check-row wide">
-              <span>
-                <span>Regenerate voice reference on next start</span>
-                <span class="help">Example: enable only after changing the reference transcript/path, then turn it back off.</span>
-              </span>
-              <input id="regenerate_voice_reference" name="regenerate_voice_reference" type="checkbox" title="Rebuild the persistent reference WAV on the next TTS server start.">
-            </label>
-            <div class="form-grid">
-              <label>Ack grace seconds
-                <input id="async_ack_grace_seconds" name="async_ack_grace_seconds" type="number" min="0" max="120" step="0.5" required title="Wait this long for the real answer before speaking an acknowledgement.">
-                <span class="help">If the answer arrives within this window, no acknowledgement is spoken (avoids a double reply on quick prompts). 0 always speaks one.</span>
-              </label>
-              <label>Spoken reply characters
-                <input id="spoken_reply_char_limit" name="spoken_reply_char_limit" type="number" min="0" max="12000" required title="Maximum text sent to speech. 0 speaks the full reply.">
-                <span class="help">Example: 900 is concise; 1300 reads more; 0 reads everything.</span>
-              </label>
-              <label>TTS chunk characters
-                <input id="tts_chunk_char_limit" name="tts_chunk_char_limit" type="number" min="0" max="12000" required title="Chunk size for non-streaming WAV playback.">
-                <span class="help">Example: 450 balances latency and voice continuity for WAV playback.</span>
-              </label>
-              <label>Streaming chunk characters
-                <input id="tts_stream_chunk_char_limit" name="tts_stream_chunk_char_limit" type="number" min="40" max="12000" required title="Chunk size used before calling the true streaming endpoint.">
-                <span class="help">Example: 1200 avoids short-reply chunk gaps; lower values split very long replies sooner.</span>
-              </label>
-              <label>Prebuffer seconds (min)
-                <input id="tts_stream_prebuffer_seconds" name="tts_stream_prebuffer_seconds" type="number" min="0" max="30" step="0.5" required title="Minimum audio buffered before streaming playback starts.">
-                <span class="help">Example: 1 starts quickly. With dynamic prebuffer this is the floor.</span>
-              </label>
-              <label>Prebuffer seconds (max)
-                <input id="tts_stream_prebuffer_max_seconds" name="tts_stream_prebuffer_max_seconds" type="number" min="0" max="30" step="0.5" required title="Maximum prebuffer/cushion when dynamic prebuffering grows the buffer for slow generation.">
-                <span class="help">Example: 6 lets slow generations build a bigger cushion before playback.</span>
-              </label>
-              <label>TTS inference steps
-                <input id="tts_inference_timesteps" name="tts_inference_timesteps" type="number" min="1" max="50" required title="Lower is faster, higher can sound cleaner.">
-                <span class="help">Lower = faster generation, slightly lower quality. 6 is default; try 4 for max speed, 8-10 for best quality.</span>
-              </label>
-              <label>TTS timeout seconds
-                <input id="tts_timeout_seconds" name="tts_timeout_seconds" type="number" min="0" max="3600" step="0.5" required title="How long to wait for each local TTS request.">
-                <span class="help">Example: 300 normal; 600 for very slow GPU/CPU runs.</span>
-              </label>
-              <label>SSH timeout seconds
-                <input id="ssh_timeout_seconds" name="ssh_timeout_seconds" type="number" min="0" max="3600" step="0.5" required title="How long to wait for Hermes. 0 disables the response timeout.">
-                <span class="help">Example: 0 lets Hermes work as long as needed.</span>
-              </label>
-              <label>SSH connect timeout
-                <input id="ssh_connect_timeout_seconds" name="ssh_connect_timeout_seconds" type="number" min="1" max="120" step="0.5" required title="How long to wait while opening SSH.">
-                <span class="help">Example: 5 fails fast if the remote machine is offline.</span>
-              </label>
-              <label>Status interval seconds
-                <input id="status_interval_seconds" name="status_interval_seconds" type="number" min="0" max="300" step="0.5" required title="How often the terminal prints still-working updates.">
-                <span class="help">Example: 10 gives steady progress messages; 0 disables them.</span>
-              </label>
-              <label>Voice inbox poll seconds
-                <input id="voice_inbox_poll_seconds" name="voice_inbox_poll_seconds" type="number" min="0" max="300" step="0.5" required title="How often to check the JSONL voice inbox. 0 disables it.">
-                <span class="help">Example: 5 checks for out-of-band replies without needing WebSocket push.</span>
-              </label>
-              <label>Follow-up initial delay
-                <input id="async_followup_initial_delay_seconds" name="async_followup_initial_delay_seconds" type="number" min="0" max="300" step="0.5" required title="Seconds before the first automatic background-result check.">
-                <span class="help">Example: 3 gives the remote task a moment before the first check.</span>
-              </label>
-              <label>Follow-up poll seconds
-                <input id="async_followup_poll_seconds" name="async_followup_poll_seconds" type="number" min="1" max="600" step="0.5" required title="Seconds between automatic background-result checks.">
-                <span class="help">Example: 8 keeps checking without needing another voice prompt.</span>
-              </label>
-              <label>Follow-up max checks
-                <input id="async_followup_max_attempts" name="async_followup_max_attempts" type="number" min="0" max="1000" required title="Maximum checks before Mara speaks a still-waiting update.">
-                <span class="help">Example: 60 checks for up to about 8 minutes at the default interval.</span>
-              </label>
-              <label>Session history messages
-                <input id="agent_session_history_messages" name="agent_session_history_messages" type="number" min="0" max="200" required title="Maximum prior user/assistant messages retained per agent session.">
-                <span class="help">Example: 20 keeps roughly the last 10 turns per agent.</span>
-              </label>
-              <label>OpenClaw timeout seconds
-                <input id="openclaw_timeout_seconds" name="openclaw_timeout_seconds" type="number" min="0" max="3600" step="0.5" required title="How long to wait for the OpenClaw HTTP response.">
-                <span class="help">Example: 600 lets OpenClaw work for longer tasks; 0 disables the timeout.</span>
-              </label>
-              <label class="wide">Acknowledgement phrases (one per line)
-                <textarea id="async_ack_phrases" name="async_ack_phrases" placeholder="On it &mdash; give me a sec.&#10;Got it, working on that now.&#10;Sure, let me look into that." title="When agent-generated acknowledgement is off, one of these is spoken at random."></textarea>
-                <span class="help">One phrase per line. When the toggle above is off, Mara picks one of these at random. Leave blank to use the single fallback below.</span>
-              </label>
-              <label class="wide">Fallback acknowledgement text
-                <input id="async_ack_text" name="async_ack_text" type="text" placeholder="Yeah, let me dig into that real quick." title="Used when no phrases are set above, and as the final fallback if agent generation fails.">
-                <span class="help">Single phrase used when no phrases are listed above, and as the last-resort fallback.</span>
-              </label>
-              <label class="wide">Voice inbox JSONL path
-                <input id="voice_inbox_path" name="voice_inbox_path" type="text" placeholder="Leave blank for config\\mara_voice_inbox.jsonl" title="File watched for out-of-band final replies.">
-                <span class="help">Example JSONL line: {"text":"Done researching it.","agent":"hermes"}.</span>
-              </label>
-              <label class="wide">Agent session id
-                <input id="agent_session_id" name="agent_session_id" type="text" placeholder="voice-session" title="Stable session id reused for Hermes/OpenClaw context.">
-                <span class="help">Example: voice-session is the base id used to derive per-agent sessions.</span>
-              </label>
-              <label class="wide">Hermes session id
-                <input id="hermes_session_id" name="hermes_session_id" type="text" placeholder="voice-session-hermes" title="Stable session id sent to Hermes/Mara on every prompt.">
-                <span class="help">Example: voice-session-hermes keeps Mara in the same Hermes session every time.</span>
-              </label>
-              <label class="wide">OpenClaw session id
-                <input id="openclaw_session_id" name="openclaw_session_id" type="text" placeholder="voice-session-openclaw" title="Stable user/session id sent to OpenClaw on every prompt.">
-                <span class="help">Example: voice-session-openclaw keeps Claw in the same OpenClaw session every time.</span>
-              </label>
-              <label class="wide">Agent session history path
-                <input id="agent_session_history_path" name="agent_session_history_path" type="text" placeholder="Leave blank for config\\mara_agent_sessions.json" title="JSON file storing persistent per-agent session history.">
-                <span class="help">Example: leave blank to use the ignored local runtime history file.</span>
-              </label>
-              <label>TTS device
-                <input id="tts_device" name="tts_device" type="text" placeholder="auto" title="Device used by VoxCPM.">
-                <span class="help">Example: auto, cpu, cuda, cuda:0.</span>
-              </label>
-              <label class="wide">OpenClaw API base URL
-                <input id="openclaw_base_url" name="openclaw_base_url" type="text" placeholder="http://192.168.0.65:8645/v1" title="OpenAI-compatible API base URL for OpenClaw.">
-                <span class="help">Example: http://192.168.0.65:8645/v1. The Dell gateway must have API_SERVER_ENABLED=true.</span>
-              </label>
-              <label class="wide">OpenClaw model
-                <input id="openclaw_model" name="openclaw_model" type="text" placeholder="gemini 3.1 pro" title="Model id sent in the OpenAI-compatible request.">
-                <span class="help">Example: gemini 3.1 pro. Change this only if the OpenClaw API reports a different model id.</span>
-              </label>
-              <label class="wide">Audio output device
-                <select id="audio_device" name="audio_device" title="Where Mara's voice plays."></select>
-                <span class="help">Example: default output device, speakers, or a headset index.</span>
-              </label>
-              <label class="wide">Capture directory
-                <input id="capture_dir" name="capture_dir" type="text" placeholder="Leave blank for Voicebox default" title="Directory watched for Voicebox WAV captures.">
-                <span class="help">Example: leave blank unless Voicebox saves WAVs somewhere else.</span>
-              </label>
-              <label class="wide">Hermes command
-                <input id="hermes_command" name="hermes_command" type="text" placeholder="~/.local/bin/hermes" title="Remote command run over SSH.">
-                <span class="help">Example: ~/.local/bin/hermes. Leave blank for default.</span>
-              </label>
-              <label class="wide">Voice reference WAV path
-                <input id="voice_reference_path" name="voice_reference_path" type="text" placeholder="Leave blank for models\\mara_voice_reference.wav" title="Path to the persistent reference WAV.">
-                <span class="help">Example: leave blank to use the generated default reference WAV.</span>
-              </label>
-              <label class="wide">Voice reference transcript
-                <textarea id="voice_reference_text" name="voice_reference_text" placeholder="Mara is online, calm, warm, and ready to answer clearly." title="Exact transcript of the reference WAV. This is not a voice style prompt."></textarea>
-                <span class="help">Example: exact spoken words in the reference WAV. Do not put style words here.</span>
-              </label>
-            </div>
-            <div class="actions">
-              <span class="note" id="saveStatus"></span>
+
+            <div class="settings-actions">
+              <span class="save-note" id="saveStatus"></span>
               <button class="secondary" id="reloadOptions" type="button">Reload</button>
-              <button id="saveOptions" type="submit">Save Options</button>
+              <button class="primary" id="saveOptions" type="submit">Save</button>
             </div>
           </form>
-        </div>
-      </section>
-
-      <section>
-        <div class="section-head">
-          <h2>TTS Health</h2>
-          <span class="pill" id="voiceMode">Unknown</span>
-        </div>
-        <div class="section-body">
-          <div class="turn">
-            <pre id="ttsHealth">No health data yet.</pre>
-          </div>
-        </div>
-      </section>
+        </section>
+      </main>
     </div>
-  </main>
+  </div>
 
   <script>
     const ids = [
@@ -623,8 +1499,75 @@
       "agent_session_id", "hermes_session_id", "openclaw_session_id", "agent_session_history_path", "agent_session_history_messages",
       "active_agent", "openclaw_base_url", "openclaw_model", "openclaw_timeout_seconds",
       "audio_device", "tts_device", "capture_dir", "hermes_command",
-      "voice_reference_path", "voice_reference_text"
+      "voice_reference_path", "voice_reference_text",
+      "hermes_voice_profile", "openclaw_voice_profile",
+      "hermes_voice_style", "openclaw_voice_style"
     ];
+
+    const MARA_VOICE_PROFILES = [
+      { id: "mara_default", name: "Mara — Default", style: "A clear adult female speaking voice with a warm lower tone, calm conversational pace, natural articulation, and no humming, sighing, singing, or nonverbal sounds" },
+      { id: "mara_warm_expressive", name: "Mara — Warm & Expressive", style: "A warm expressive adult female voice with a rich tone, gentle emotional range, conversational warmth, and natural articulation without humming or sighing" },
+      { id: "mara_professional", name: "Mara — Professional", style: "A crisp professional adult female voice with clear enunciation, measured pace, authoritative tone, and precise articulation without filler sounds" },
+      { id: "mara_casual", name: "Mara — Casual", style: "A relaxed casual adult female voice with a friendly tone, natural conversational rhythm, light energy, and no nonverbal sounds or humming" },
+      { id: "mara_soft_soothing", name: "Mara — Soft & Soothing", style: "A soft gentle adult female voice with a low soothing tone, slow deliberate pace, calm delivery, and no humming, singing, or nonverbal sounds" },
+      { id: "custom", name: "Custom", style: null },
+    ];
+
+    const OPENCLAW_VOICE_PROFILES = [
+      { id: "openclaw_default", name: "OpenClaw — Default", style: "A clear adult male speaking voice with a steady lower register, calm conversational pace, natural articulation, and no humming, sighing, singing, or nonverbal sounds" },
+      { id: "openclaw_deep_authoritative", name: "OpenClaw — Deep & Authoritative", style: "A deep authoritative adult male voice with a resonant bass tone, measured deliberate pace, commanding presence, and precise articulation without filler sounds" },
+      { id: "openclaw_technical", name: "OpenClaw — Technical", style: "A precise technical adult male voice with clear enunciation, steady rhythm, neutral analytical tone, and no humming, singing, or nonverbal sounds" },
+      { id: "openclaw_energetic", name: "OpenClaw — Energetic", style: "An energetic enthusiastic adult male voice with higher register energy, dynamic pace, clear articulation, and no humming or sighing" },
+      { id: "openclaw_crisp", name: "OpenClaw — Crisp", style: "A crisp direct adult male voice with clean enunciation, efficient pace, sharp delivery, and no nonverbal sounds or filler" },
+      { id: "custom", name: "Custom", style: null },
+    ];
+
+    function buildProfileSelect(selectEl, profiles) {
+      selectEl.replaceChildren();
+      for (const profile of profiles) {
+        const opt = document.createElement("option");
+        opt.value = profile.id;
+        opt.textContent = profile.name;
+        selectEl.append(opt);
+      }
+    }
+
+    function detectProfileId(profiles, styleText) {
+      const trimmed = (styleText || "").trim();
+      if (!trimmed) return "custom";
+      for (const p of profiles) {
+        if (p.style && p.style.trim() === trimmed) return p.id;
+      }
+      return "custom";
+    }
+
+    function wireProfileSelect(selectId, textareaId, profiles) {
+      const select = el(selectId);
+      const textarea = el(textareaId);
+      if (!select || !textarea) return;
+      buildProfileSelect(select, profiles);
+      select.addEventListener("change", () => {
+        const found = profiles.find(p => p.id === select.value);
+        if (found && found.style !== null) textarea.value = found.style;
+      });
+      textarea.addEventListener("input", () => {
+        select.value = detectProfileId(profiles, textarea.value);
+      });
+    }
+
+    function syncProfileSelect(selectId, textareaId, profiles, savedProfile) {
+      const select = el(selectId);
+      const textarea = el(textareaId);
+      if (!select || !textarea) return;
+      const saved = profiles.find(p => p.id === savedProfile);
+      if (saved && saved.style && !textarea.value.trim()) textarea.value = saved.style;
+      select.value = detectProfileId(profiles, textarea.value);
+    }
+
+    function syncProfileSelects(options = {}) {
+      syncProfileSelect("hermes_voice_profile", "hermes_voice_style", MARA_VOICE_PROFILES, options.hermes_voice_profile);
+      syncProfileSelect("openclaw_voice_profile", "openclaw_voice_style", OPENCLAW_VOICE_PROFILES, options.openclaw_voice_profile);
+    }
     const el = (id) => document.getElementById(id);
 
     function fmtTime(value) {
@@ -641,8 +1584,9 @@
     }
 
     function setPill(node, text, state) {
+      if (!node) return;
       node.textContent = text;
-      node.classList.remove("good", "bad", "warn");
+      node.classList.remove("good", "bad", "warn", "violet");
       if (state) node.classList.add(state);
     }
 
@@ -650,6 +1594,30 @@
       const led = el("led");
       led.classList.remove("good", "bad", "warn");
       if (state) led.classList.add(state);
+    }
+
+    function setSaveStatus(text) {
+      const node = el("saveStatus");
+      if (node) node.textContent = text || "";
+    }
+
+    function showPage(page) {
+      for (const button of document.querySelectorAll("[data-page]")) {
+        button.classList.toggle("active", button.dataset.page === page);
+      }
+      for (const section of document.querySelectorAll(".page")) {
+        section.classList.toggle("active", section.id === `page-${page}`);
+      }
+      el("pageTitle").textContent = "Mara Voice";
+    }
+
+    function showSettingsTab(tab) {
+      for (const button of document.querySelectorAll("[data-settings-tab]")) {
+        button.classList.toggle("active", button.dataset.settingsTab === tab);
+      }
+      for (const pane of document.querySelectorAll(".settings-pane")) {
+        pane.classList.toggle("active", pane.id === `settings-${tab}`);
+      }
     }
 
     function statusTone(status, type = "") {
@@ -719,7 +1687,7 @@
     function renderEvents(events) {
       const body = el("eventsBody");
       body.replaceChildren();
-      const recent = [...events].reverse().slice(0, 80);
+      const recent = [...events].reverse().slice(0, 100);
       for (const event of recent) {
         const row = document.createElement("tr");
         const time = document.createElement("td");
@@ -740,7 +1708,6 @@
       }
     }
 
-    // --- Timing telemetry derived from the event stream -------------------
     function computeTelemetry(events) {
       const telemetry = { dictation: null, generation: null, speech: null, throughput: null };
       for (const event of events || []) {
@@ -778,7 +1745,6 @@
       }
     }
 
-    // --- Conversation panels: actual dialogue only, no log/status noise ---
     function addChatEntry(logs, agent, entry) {
       const target = agent === "openclaw" ? "openclaw" : "hermes";
       logs[target].push(entry);
@@ -815,7 +1781,6 @@
           while (pendingUsers.length) addChatEntry(logs, replyAgent, pendingUsers.shift());
           const rawSource = String(details.source || "");
           const isAck = rawSource === "ack";
-          // "async" is already conveyed by the async tag; only surface distinct sources.
           const sourceTag = isAck || rawSource === "async" ? "" : rawSource;
           addChatEntry(logs, replyAgent, {
             role: "mara",
@@ -826,10 +1791,7 @@
             ack: isAck,
             timing: details.agent_seconds ? `gen ${Number(details.agent_seconds).toFixed(2)}s` : "",
           });
-          continue;
         }
-        // status / error / metric events are intentionally excluded from the
-        // conversation panels — they live in the Event Log instead.
       }
 
       while (pendingUsers.length) addChatEntry(logs, fallbackAgent, pendingUsers.shift());
@@ -909,6 +1871,7 @@
       const logs = buildAgentLogs(events, route || {});
       renderAgentLog("hermes", logs.hermes);
       renderAgentLog("openclaw", logs.openclaw);
+      el("navChatCount").textContent = String(logs.hermes.length + logs.openclaw.length);
     }
 
     function renderState(state) {
@@ -917,14 +1880,13 @@
       el("currentMessage").textContent = state.current_message || "-";
       el("updated").textContent = fmtTime(state.last_updated);
       el("eventCount").textContent = `${state.event_count || 0} events`;
+      el("navLogCount").textContent = String(state.event_count || 0);
       el("subtitle").textContent = state.event_log_path || "";
       renderRoute(state.agent_route || {});
       const hasError = Boolean(state.last_error);
       el("errorPanel").hidden = !hasError;
       el("lastError").textContent = state.last_error || "";
       renderEvents(events);
-      // Chat panels use the dedicated conversation list so status/metric events
-      // can't scroll the actual dialogue out of view.
       renderAgentLogs(state.conversation_events || events, state.agent_route || {});
       renderTelemetry(events);
 
@@ -932,7 +1894,7 @@
       const payload = health.payload || {};
       const device = payload.effective_device || payload.device || "";
       const onGpu = String(device).toLowerCase().startsWith("cuda");
-      const deviceSuffix = device ? ` · ${device}${onGpu ? "" : " (slow)"}` : "";
+      const deviceSuffix = device ? ` - ${device}${onGpu ? "" : " (slow)"}` : "";
       if (health.ok) {
         setPill(el("connection"), "Connected", "good");
         setLed("good");
@@ -989,7 +1951,7 @@
     }
 
     async function loadOptions() {
-      el("saveStatus").textContent = "";
+      setSaveStatus("");
       const response = await fetch("/api/options", { cache: "no-store" });
       if (!response.ok) throw new Error(`options ${response.status}`);
       const payload = await response.json();
@@ -997,6 +1959,7 @@
       for (const id of ids) setField(id, options[id]);
       renderAudioDevices(payload.audio_devices || [], options.audio_device);
       renderRoute(payload.agent_route || {});
+      syncProfileSelects(options);
       return payload;
     }
 
@@ -1005,7 +1968,7 @@
       const options = {};
       for (const id of ids) options[id] = fieldValue(id);
       el("saveOptions").disabled = true;
-      el("saveStatus").textContent = "Saving...";
+      setSaveStatus("Saving...");
       try {
         const response = await fetch("/api/options", {
           method: "POST",
@@ -1017,9 +1980,10 @@
         for (const id of ids) setField(id, payload.options[id]);
         renderAudioDevices(payload.audio_devices || [], payload.options.audio_device);
         renderRoute(payload.agent_route || {});
-        el("saveStatus").textContent = "Saved. Route applies live; restart applies listener/server settings.";
+        syncProfileSelects(payload.options || {});
+        setSaveStatus("Saved. Route applies live; voice style updates the running TTS server; other settings apply after restart.");
       } catch (error) {
-        el("saveStatus").textContent = error.message;
+        setSaveStatus(error.message);
       } finally {
         el("saveOptions").disabled = false;
       }
@@ -1029,9 +1993,9 @@
       const active = route.active_agent || el("active_agent")?.value || "hermes";
       const next = route.next_agent || "";
       if (el("active_agent")) el("active_agent").value = active;
-      el("agentStatus").textContent = next ? `${agentLabel(active)} → ${agentLabel(next)}` : agentLabel(active);
+      el("agentStatus").textContent = next ? `${agentLabel(active)} -> ${agentLabel(next)}` : agentLabel(active);
       const keyStatus = route.openclaw_key_configured ? "OpenClaw key configured" : "OpenClaw key missing";
-      const nextText = next ? ` Next prompt: ${agentLabel(next)}.` : "";
+      const nextText = next ? ` Next: ${agentLabel(next)}.` : "";
       el("routeStatus").textContent = `Default: ${agentLabel(active)}.${nextText} ${keyStatus}.`;
     }
 
@@ -1069,35 +2033,32 @@
       if (status.running) {
         setPill(pill, "Pipeline up", "good");
         btn.disabled = true;
-        btn.textContent = "Pipeline Running";
+        btn.querySelector("span:last-child").textContent = "Running";
       } else {
         setPill(pill, "Pipeline down", "bad");
         btn.disabled = !status.launcher_available;
-        btn.textContent = status.launcher_available ? "Start Pipeline" : "Launcher missing";
+        btn.querySelector("span:last-child").textContent = status.launcher_available ? "Start" : "Missing";
       }
     }
 
     async function startPipeline() {
       el("startPipeline").disabled = true;
-      el("saveStatus").textContent = "Starting pipeline...";
+      setSaveStatus("Starting pipeline...");
       try {
         const response = await fetch("/api/launch", { method: "POST" });
         const payload = await response.json();
         renderPipeline(payload);
-        el("saveStatus").textContent = payload.launched
+        setSaveStatus(payload.launched
           ? "Pipeline starting. Give the TTS server a moment to load."
-          : `Pipeline: ${payload.reason || "no change"}.`;
+          : `Pipeline: ${payload.reason || "no change"}.`);
       } catch (error) {
-        el("saveStatus").textContent = error.message;
+        setSaveStatus(error.message);
       }
     }
 
     async function ensurePipeline() {
       const status = await fetchLaunchStatus();
       renderPipeline(status);
-      // Auto-start once per page load if the stack is down. The server guards
-      // against duplicate launches (cooldown + TTS-health check), so this no-ops
-      // when the pipeline is already running.
       if (!autoLaunchTried && status && !status.running && status.launcher_available) {
         autoLaunchTried = true;
         await startPipeline();
@@ -1114,30 +2075,41 @@
       renderPipeline(await fetchLaunchStatus());
     }
 
+    for (const button of document.querySelectorAll("[data-page]")) {
+      button.addEventListener("click", () => showPage(button.dataset.page));
+    }
+    for (const button of document.querySelectorAll("[data-settings-tab]")) {
+      button.addEventListener("click", () => showSettingsTab(button.dataset.settingsTab));
+    }
+
     el("refresh").addEventListener("click", refreshAll);
+    el("logRefresh").addEventListener("click", refreshAll);
     el("startPipeline").addEventListener("click", startPipeline);
     el("reloadOptions").addEventListener("click", () => loadOptions().catch((error) => {
-      el("saveStatus").textContent = error.message;
+      setSaveStatus(error.message);
     }));
     el("optionsForm").addEventListener("submit", saveOptions);
     el("active_agent").addEventListener("change", () => {
       saveRoute({ active_agent: fieldValue("active_agent") })
-        .then(() => { el("saveStatus").textContent = "Agent route updated."; })
-        .catch((error) => { el("saveStatus").textContent = error.message; });
+        .then(() => { setSaveStatus("Agent route updated."); })
+        .catch((error) => { setSaveStatus(error.message); });
     });
     el("nextOpenClaw").addEventListener("click", () => {
       saveRoute({ next_agent: "openclaw" })
-        .then(() => { el("saveStatus").textContent = "Next prompt will use OpenClaw."; })
-        .catch((error) => { el("saveStatus").textContent = error.message; });
+        .then(() => { setSaveStatus("Next prompt will use OpenClaw."); })
+        .catch((error) => { setSaveStatus(error.message); });
     });
     el("clearNextAgent").addEventListener("click", () => {
       saveRoute({ next_agent: "" })
-        .then(() => { el("saveStatus").textContent = "Next prompt route cleared."; })
-        .catch((error) => { el("saveStatus").textContent = error.message; });
+        .then(() => { setSaveStatus("Next prompt route cleared."); })
+        .catch((error) => { setSaveStatus(error.message); });
     });
 
+    wireProfileSelect("hermes_voice_profile", "hermes_voice_style", MARA_VOICE_PROFILES);
+    wireProfileSelect("openclaw_voice_profile", "openclaw_voice_style", OPENCLAW_VOICE_PROFILES);
+
     loadOptions().catch((error) => {
-      el("saveStatus").textContent = error.message;
+      setSaveStatus(error.message);
     });
     refreshAll().then(ensurePipeline);
     setInterval(refreshAll, 2000);

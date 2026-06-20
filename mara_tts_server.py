@@ -181,6 +181,17 @@ def set_voice_reference_options(
     VOICE_REFERENCE_REGENERATE = regenerate
 
 
+def set_voice_style_options(
+    hermes_voice_style: str | None = None,
+    openclaw_voice_style: str | None = None,
+) -> None:
+    global DEFAULT_VOICE_STYLE, DEFAULT_OPENCLAW_VOICE_STYLE
+    if hermes_voice_style and hermes_voice_style.strip():
+        DEFAULT_VOICE_STYLE = hermes_voice_style.strip()
+    if openclaw_voice_style and openclaw_voice_style.strip():
+        DEFAULT_OPENCLAW_VOICE_STYLE = openclaw_voice_style.strip()
+
+
 def seed_generation() -> None:
     random.seed(DEFAULT_TTS_SEED)
     np.random.seed(DEFAULT_TTS_SEED)
@@ -422,6 +433,36 @@ def healthz() -> dict[str, object]:
     }
 
 
+class VoiceStyleUpdate(BaseModel):
+    hermes_voice_style: str | None = Field(default=None, max_length=1000)
+    openclaw_voice_style: str | None = Field(default=None, max_length=1000)
+
+
+@app.post("/voice-style")
+def update_voice_style(req: VoiceStyleUpdate) -> dict[str, object]:
+    global DEFAULT_VOICE_STYLE, DEFAULT_OPENCLAW_VOICE_STYLE
+    updated = []
+    with MODEL_LOCK:
+        if req.hermes_voice_style and req.hermes_voice_style.strip():
+            DEFAULT_VOICE_STYLE = req.hermes_voice_style.strip()
+            VOICE_PROMPT_CACHES.pop("hermes", None)
+            _REGENERATED_VOICE_IDS.discard("hermes")
+            VOICE_REFERENCE_ERRORS.pop("hermes", None)
+            updated.append("hermes")
+        if req.openclaw_voice_style and req.openclaw_voice_style.strip():
+            DEFAULT_OPENCLAW_VOICE_STYLE = req.openclaw_voice_style.strip()
+            VOICE_PROMPT_CACHES.pop("openclaw", None)
+            _REGENERATED_VOICE_IDS.discard("openclaw")
+            VOICE_REFERENCE_ERRORS.pop("openclaw", None)
+            updated.append("openclaw")
+    logger.info("Voice styles updated for: %s", updated)
+    return {
+        "updated": updated,
+        "hermes_voice_style": DEFAULT_VOICE_STYLE,
+        "openclaw_voice_style": DEFAULT_OPENCLAW_VOICE_STYLE,
+    }
+
+
 @app.post("/tts")
 def generate_tts(req: TTSRequest) -> Response:
     normalized_text = " ".join(req.text.split())
@@ -605,6 +646,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Recreate the persistent reference WAV on startup.",
     )
+    parser.add_argument(
+        "--hermes-voice-style",
+        default=os.getenv("MARA_VOICE_STYLE", ""),
+        help="Voice style description for Mara (Hermes). Overrides the built-in default.",
+    )
+    parser.add_argument(
+        "--openclaw-voice-style",
+        default=os.getenv("MARA_OPENCLAW_VOICE_STYLE", ""),
+        help="Voice style description for OpenClaw. Overrides the built-in default.",
+    )
     parser.add_argument("--log-level", default=os.getenv("MARA_LOG_LEVEL", "INFO"))
     return parser
 
@@ -621,6 +672,7 @@ def main() -> int:
         not args.disable_voice_reference,
         args.regenerate_voice_reference,
     )
+    set_voice_style_options(args.hermes_voice_style, args.openclaw_voice_style)
     logger.info("Starting Mara TTS server on %s:%s", args.host, args.port)
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
     return 0

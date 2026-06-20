@@ -47,6 +47,8 @@ param(
     [double]$OpenClawTimeoutSeconds = 600,
     [string]$VoiceReferencePath,
     [string]$VoiceReferenceText,
+    [string]$HermesVoiceStyle,
+    [string]$OpenClawVoiceStyle,
     [switch]$DisableVoiceReference,
     [switch]$RegenerateVoiceReference,
     [switch]$ForcePolling,
@@ -79,6 +81,7 @@ $resolvedAgentRouteStatePath = if ($AgentRouteStatePath) { $AgentRouteStatePath 
 $ttsUrl = "http://127.0.0.1:8000/tts"
 $ttsHealthUrl = "http://127.0.0.1:8000/healthz"
 $guiUrl = "http://$GuiHost`:$GuiPort"
+$guiOpenUrl = "$guiUrl/?v=$((Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss'))"
 $requiredVoiceGenerationMode = "persistent_reference_only_v2"
 
 function Write-Step {
@@ -353,6 +356,8 @@ $OpenClawModel = Resolve-Option $boundParams 'OpenClawModel' $OpenClawModel -Env
 $OpenClawTimeoutSeconds = Resolve-Option $boundParams 'OpenClawTimeoutSeconds' $OpenClawTimeoutSeconds -EnvName 'MARA_OPENCLAW_TIMEOUT' -SavedName 'openclaw_timeout_seconds' -Type 'Double'
 $VoiceReferencePath = Resolve-Option $boundParams 'VoiceReferencePath' $VoiceReferencePath -EnvName 'MARA_VOICE_REFERENCE_PATH' -SavedName 'voice_reference_path'
 $VoiceReferenceText = Resolve-Option $boundParams 'VoiceReferenceText' $VoiceReferenceText -EnvName 'MARA_VOICE_REFERENCE_TEXT' -SavedName 'voice_reference_text'
+$HermesVoiceStyle = Resolve-Option $boundParams 'HermesVoiceStyle' $HermesVoiceStyle -EnvName 'MARA_VOICE_STYLE' -SavedName 'hermes_voice_style'
+$OpenClawVoiceStyle = Resolve-Option $boundParams 'OpenClawVoiceStyle' $OpenClawVoiceStyle -EnvName 'MARA_OPENCLAW_VOICE_STYLE' -SavedName 'openclaw_voice_style'
 
 # --- Boolean switches need bespoke handling for their -No* counterparts ---
 if (-not $boundParams.ContainsKey('TtsStreaming') -and -not $NoTtsStreaming -and (Test-EnvOption "MARA_TTS_STREAMING")) {
@@ -883,6 +888,14 @@ else {
         $ttsArguments += "--regenerate-voice-reference"
     }
 
+    if ($HermesVoiceStyle) {
+        $ttsArguments += @("--hermes-voice-style", $HermesVoiceStyle)
+    }
+
+    if ($OpenClawVoiceStyle) {
+        $ttsArguments += @("--openclaw-voice-style", $OpenClawVoiceStyle)
+    }
+
     Remove-Item -Path $ttsStdoutLog, $ttsStderrLog -ErrorAction SilentlyContinue
 
     $startProcessArgs = @{
@@ -985,11 +998,11 @@ if ($Gui) {
 
     Write-Step "Mara GUI available at $guiUrl"
     try {
-        Start-Process $guiUrl | Out-Null
+        Start-Process $guiOpenUrl | Out-Null
     }
     catch {
         Write-Step "Could not open the GUI automatically: $($_.Exception.Message)"
-        Write-Step "Open this URL manually: $guiUrl"
+        Write-Step "Open this URL manually: $guiOpenUrl"
     }
 }
 

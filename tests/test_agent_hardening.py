@@ -27,6 +27,16 @@ class GuardrailTests(unittest.TestCase):
         self.assertEqual(corrected, "I'm Mara, actually.")
         self.assertTrue(violations)
 
+    def test_corrects_hermes_intro_as_claw(self) -> None:
+        corrected, violations = guardrail_review(AGENT_HERMES, "Claw here, I can handle that.")
+        self.assertEqual(corrected, "Mara here, I can handle that.")
+        self.assertIn("self-identified as Claw", violations)
+
+    def test_corrects_hermes_this_is_claw(self) -> None:
+        corrected, violations = guardrail_review(AGENT_HERMES, "This is Claw. I can handle that.")
+        self.assertEqual(corrected, "This is Mara. I can handle that.")
+        self.assertIn("self-identified as Claw", violations)
+
     def test_allows_legitimate_third_person_mention(self) -> None:
         text = "I am Claw, but Mara handles the calendar."
         corrected, violations = guardrail_review(AGENT_OPENCLAW, text)

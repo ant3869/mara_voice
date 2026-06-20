@@ -63,6 +63,10 @@ class GuiServerTests(unittest.TestCase):
                             "voice_inbox_poll_seconds": 3.0,
                             "spoken_reply_char_limit": 1200,
                             "tts_stream_chunk_char_limit": 1200,
+                            "hermes_voice_profile": "mara_professional",
+                            "hermes_voice_style": "A crisp professional adult female voice.",
+                            "openclaw_voice_profile": "openclaw_technical",
+                            "openclaw_voice_style": "A precise technical adult male voice.",
                         }
                     },
                 )
@@ -95,6 +99,10 @@ class GuiServerTests(unittest.TestCase):
         self.assertEqual(save_response.json()["options"]["voice_inbox_poll_seconds"], 3.0)
         self.assertEqual(save_response.json()["options"]["spoken_reply_char_limit"], 1200)
         self.assertEqual(save_response.json()["options"]["tts_stream_chunk_char_limit"], 1200)
+        self.assertEqual(save_response.json()["options"]["hermes_voice_profile"], "mara_professional")
+        self.assertEqual(save_response.json()["options"]["hermes_voice_style"], "A crisp professional adult female voice.")
+        self.assertEqual(save_response.json()["options"]["openclaw_voice_profile"], "openclaw_technical")
+        self.assertEqual(save_response.json()["options"]["openclaw_voice_style"], "A precise technical adult male voice.")
         self.assertEqual(state_response.status_code, 200)
         self.assertEqual(state_response.json()["current_status"], "THINKING")
         self.assertEqual(state_response.json()["last_user_text"], "hello")
