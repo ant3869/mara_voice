@@ -83,6 +83,12 @@ $ttsHealthUrl = "http://127.0.0.1:8000/healthz"
 $guiUrl = "http://$GuiHost`:$GuiPort"
 $guiOpenUrl = "$guiUrl/?v=$((Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss'))"
 $requiredVoiceGenerationMode = "persistent_reference_only_v2"
+$requiredGuiOptionKeys = @(
+    "hermes_voice_profile",
+    "hermes_voice_style",
+    "openclaw_voice_profile",
+    "openclaw_voice_style"
+)
 
 function Write-Step {
     param([string]$Message)
@@ -450,6 +456,43 @@ function Normalize-Whitespace {
     return (($Text -split '\s+') -join ' ').Trim()
 }
 
+function Get-VoiceProfile {
+    param(
+        $Health,
+        [string]$VoiceId
+    )
+
+    if ($null -eq $Health -or -not ($Health.PSObject.Properties.Name -contains "voice_profiles")) {
+        return $null
+    }
+
+    $profileProperty = $Health.voice_profiles.PSObject.Properties[$VoiceId]
+    if ($null -eq $profileProperty) {
+        return $null
+    }
+
+    return $profileProperty.Value
+}
+
+function Test-VoiceProfileStyle {
+    param(
+        $Health,
+        [string]$VoiceId,
+        [string]$ExpectedStyle
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ExpectedStyle)) {
+        return $true
+    }
+
+    $profile = Get-VoiceProfile -Health $Health -VoiceId $VoiceId
+    if ($null -eq $profile -or -not ($profile.PSObject.Properties.Name -contains "voice_style")) {
+        return $false
+    }
+
+    return (Normalize-Whitespace -Text ([string]$profile.voice_style)) -eq (Normalize-Whitespace -Text $ExpectedStyle)
+}
+
 function Test-TtsHealthUsable {
     param($Health)
 
@@ -512,11 +555,23 @@ function Test-TtsHealthUsable {
         return $false
     }
 
+    if (-not ($Health.voice_profiles.PSObject.Properties.Name -contains "hermes")) {
+        return $false
+    }
+
     if (-not ($Health.voice_profiles.PSObject.Properties.Name -contains "openclaw")) {
         return $false
     }
 
     if ($Health.voice_generation_mode -ne $requiredVoiceGenerationMode) {
+        return $false
+    }
+
+    if (-not (Test-VoiceProfileStyle -Health $Health -VoiceId "hermes" -ExpectedStyle $HermesVoiceStyle)) {
+        return $false
+    }
+
+    if (-not (Test-VoiceProfileStyle -Health $Health -VoiceId "openclaw" -ExpectedStyle $OpenClawVoiceStyle)) {
         return $false
     }
 
@@ -582,12 +637,24 @@ function Format-TtsHealthProblem {
             return "The server does not report per-agent voice profiles. Stop the old TTS server and start again."
         }
 
+        if (-not ($Health.voice_profiles.PSObject.Properties.Name -contains "hermes")) {
+            return "The server does not report the Hermes voice profile. Stop the old TTS server and start again."
+        }
+
         if (-not ($Health.voice_profiles.PSObject.Properties.Name -contains "openclaw")) {
             return "The server does not report the OpenClaw voice profile. Stop the old TTS server and start again."
         }
 
         if ($Health.voice_generation_mode -ne $requiredVoiceGenerationMode) {
             return "The server uses voice_generation_mode='$($Health.voice_generation_mode)', but this launch requires '$requiredVoiceGenerationMode'. Stop the old TTS server and start again."
+        }
+
+        if (-not (Test-VoiceProfileStyle -Health $Health -VoiceId "hermes" -ExpectedStyle $HermesVoiceStyle)) {
+            return "The server uses a different Hermes voice style than this launch. Stop the old TTS server and start again."
+        }
+
+        if (-not (Test-VoiceProfileStyle -Health $Health -VoiceId "openclaw" -ExpectedStyle $OpenClawVoiceStyle)) {
+            return "The server uses a different OpenClaw voice style than this launch. Stop the old TTS server and start again."
         }
 
         if ($VoiceReferencePath -and ($Health.PSObject.Properties.Name -contains "voice_reference_path")) {
@@ -690,6 +757,52 @@ function Get-GuiHealth {
     }
 }
 
+function Test-GuiHealthUsable {
+    param($Health)
+
+    if ($null -eq $Health -or $Health.status -ne "ok") {
+        return $false
+    }
+
+    if (-not ($Health.PSObject.Properties.Name -contains "option_schema_keys")) {
+        return $false
+    }
+
+    $schemaKeys = @($Health.option_schema_keys)
+    foreach ($key in $requiredGuiOptionKeys) {
+        if ($schemaKeys -notcontains $key) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Format-GuiHealthProblem {
+    param($Health)
+
+    if ($null -eq $Health) {
+        return "No health response received."
+    }
+
+    if ($Health.status -ne "ok") {
+        return "Health endpoint returned status '$($Health.status)'."
+    }
+
+    if (-not ($Health.PSObject.Properties.Name -contains "option_schema_keys")) {
+        return "The server does not report option schema keys. Stop the old GUI server and start again."
+    }
+
+    $schemaKeys = @($Health.option_schema_keys)
+    foreach ($key in $requiredGuiOptionKeys) {
+        if ($schemaKeys -notcontains $key) {
+            return "The server option schema is missing '$key'. Stop the old GUI server and start again."
+        }
+    }
+
+    return "The GUI health endpoint is not compatible with this launcher."
+}
+
 function Wait-ForGuiHealth {
     param(
         [System.Diagnostics.Process]$Process,
@@ -699,7 +812,7 @@ function Wait-ForGuiHealth {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         $health = Get-GuiHealth
-        if ($null -ne $health -and $health.status -eq "ok") {
+        if (Test-GuiHealthUsable -Health $health) {
             return $health
         }
 
@@ -788,6 +901,39 @@ function Stop-ExistingLocalTtsServer {
         }
         catch {
             Write-Step "Could not stop TTS process $processId`: $($_.Exception.Message)"
+        }
+    }
+
+    return $stoppedAny
+}
+
+function Stop-ExistingLocalGuiServer {
+    $stoppedAny = $false
+    try {
+        $connections = Get-NetTCPConnection -LocalPort $GuiPort -State Listen -ErrorAction SilentlyContinue
+    }
+    catch {
+        return $false
+    }
+
+    foreach ($processId in ($connections | Select-Object -ExpandProperty OwningProcess -Unique)) {
+        if (-not $processId) {
+            continue
+        }
+
+        try {
+            $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
+            $commandLine = [string]$processInfo.CommandLine
+            if ($commandLine -notlike "*mara_gui_server.py*") {
+                continue
+            }
+
+            Write-Step "Stopping stale Mara GUI server process $processId"
+            Stop-Process -Id ([int]$processId) -Force -ErrorAction Stop
+            $stoppedAny = $true
+        }
+        catch {
+            Write-Step "Could not stop GUI process $processId`: $($_.Exception.Message)"
         }
     }
 
@@ -963,7 +1109,19 @@ if ($LASTEXITCODE -ne 0) {
 
 if ($Gui) {
     $existingGuiHealth = Get-GuiHealth
-    if ($null -ne $existingGuiHealth -and $existingGuiHealth.status -eq "ok") {
+    if ($null -ne $existingGuiHealth -and -not (Test-GuiHealthUsable -Health $existingGuiHealth)) {
+        $guiHealthProblem = Format-GuiHealthProblem -Health $existingGuiHealth
+        Write-Step "Existing GUI server is not usable: $guiHealthProblem"
+        if (Stop-ExistingLocalGuiServer) {
+            Start-Sleep -Seconds 1
+            $existingGuiHealth = Get-GuiHealth
+        }
+        else {
+            throw "A GUI server is already responding on $guiUrl but could not be safely restarted: $guiHealthProblem"
+        }
+    }
+
+    if ($null -ne $existingGuiHealth -and (Test-GuiHealthUsable -Health $existingGuiHealth)) {
         Write-Step "Using existing Mara GUI on $guiUrl"
     }
     else {
@@ -988,11 +1146,12 @@ if ($Gui) {
         $guiProcess = Start-Process -FilePath $venvPython -ArgumentList (Join-ProcessArguments -Arguments $guiArguments) -WorkingDirectory $repoRoot -RedirectStandardOutput $guiStdoutLog -RedirectStandardError $guiStderrLog -PassThru -WindowStyle Hidden
         [Environment]::SetEnvironmentVariable('MARA_GUI_PID', [string]$guiProcess.Id)
         $guiHealth = Wait-ForGuiHealth -Process $guiProcess
-        if ($null -eq $guiHealth -or $guiHealth.status -ne "ok") {
+        if (-not (Test-GuiHealthUsable -Health $guiHealth)) {
             Show-LogTail -Path $guiStdoutLog
             Show-LogTail -Path $guiStderrLog
+            $guiHealthProblem = Format-GuiHealthProblem -Health $guiHealth
             Stop-MaraProcesses
-            throw "GUI server failed to become healthy on $guiUrl"
+            throw "GUI server failed to become healthy on $guiUrl. $guiHealthProblem"
         }
     }
 

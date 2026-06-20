@@ -1927,6 +1927,7 @@
     function setField(id, value) {
       const node = el(id);
       if (!node) return;
+      if (value === undefined) return;
       if (node.type === "checkbox") {
         node.checked = Boolean(value);
       } else {

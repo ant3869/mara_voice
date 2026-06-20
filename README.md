@@ -92,7 +92,7 @@ When enabled, the active agent can speak up on its own. While the pipeline is id
 
 ### Voice profiles
 
-OpenClaw uses a separate male TTS voice profile with reference audio at `models/openclaw_voice_reference.wav`. Hermes uses the default Mara voice. The GUI saves the selected preset profile plus its voice-style text, and the reference is regenerated automatically when the style changes.
+OpenClaw uses a separate male TTS voice profile with reference audio at `models/openclaw_voice_reference.wav`. Hermes uses the default Mara voice. The GUI saves the selected preset profile plus its voice-style text, and the reference is regenerated automatically when the style changes. The launcher refreshes stale GUI/TTS processes when their option schema or voice styles do not match the saved profile settings.
 
 ### Voice inbox
 

@@ -24,7 +24,7 @@ from mara_agent_state import (
     update_agent_route_state,
 )
 from mara_agents import openclaw_key_configured
-from mara_config import DEFAULT_CONFIG_PATH, load_options, options_payload, save_options
+from mara_config import DEFAULT_CONFIG_PATH, OPTION_SCHEMA, load_options, options_payload, save_options
 from mara_events import DEFAULT_EVENT_LOG_PATH, read_recent_events
 from mara_gui_state import build_state
 from mara_pipeline import PipelineConfig, check_tts_health, list_output_devices
@@ -223,6 +223,7 @@ def api_health() -> dict[str, Any]:
         "event_log_path": str(EVENT_LOG_PATH),
         "config_path": str(CONFIG_PATH),
         "agent_route_state_path": str(AGENT_ROUTE_STATE_PATH),
+        "option_schema_keys": sorted(OPTION_SCHEMA.keys()),
         "agent_route": current_agent_route_payload(),
         "tts_health_url": TTS_HEALTH_URL,
         "tts_health": current_tts_health(timeout_seconds=1.0),

@@ -76,6 +76,7 @@ class GuiServerTests(unittest.TestCase):
                     json={"active_agent": "openclaw", "next_agent": "openclaw"},
                 )
                 options_after_route = client.get("/api/options")
+                health_response = client.get("/api/health")
             finally:
                 mara_gui_server.CONFIG_PATH = original_config_path
                 mara_gui_server.EVENT_LOG_PATH = original_event_log_path
@@ -111,6 +112,11 @@ class GuiServerTests(unittest.TestCase):
         self.assertEqual(route_response.json()["next_agent"], "openclaw")
         self.assertEqual(options_after_route.status_code, 200)
         self.assertEqual(options_after_route.json()["options"]["active_agent"], "openclaw")
+        self.assertEqual(health_response.status_code, 200)
+        self.assertIn("hermes_voice_profile", health_response.json()["option_schema_keys"])
+        self.assertIn("hermes_voice_style", health_response.json()["option_schema_keys"])
+        self.assertIn("openclaw_voice_profile", health_response.json()["option_schema_keys"])
+        self.assertIn("openclaw_voice_style", health_response.json()["option_schema_keys"])
 
 
 if __name__ == "__main__":
