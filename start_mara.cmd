@@ -18,7 +18,7 @@ if not exist "%START_SCRIPT%" (
 )
 
 pushd "%SCRIPT_DIR%" >nul
-"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%START_SCRIPT%" %GUI_FLAG% %*
+start "" /B /WAIT "%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%START_SCRIPT%" %GUI_FLAG% %*
 set "EXIT_CODE=%ERRORLEVEL%"
 popd >nul
 

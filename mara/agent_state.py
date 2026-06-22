@@ -4,10 +4,10 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from mara_agents import AGENT_HERMES, normalize_agent_id
+from mara.agents import AGENT_HERMES, normalize_agent_id
 
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_AGENT_ROUTE_STATE_PATH = BASE_DIR / "config" / "mara_agent_route.runtime.json"
 
 

@@ -4,7 +4,7 @@ import argparse
 import os
 from pathlib import Path
 
-from mara_pipeline import (
+from mara.pipeline import (
     DEFAULT_AGENT_SESSION_HISTORY_MESSAGES,
     DEFAULT_AGENT_SESSION_HISTORY_PATH,
     DEFAULT_AGENT_SESSION_ID,

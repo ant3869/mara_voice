@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from mara_env import load_dotenv
+from mara.env import load_dotenv
 
 
 class EnvLoadingTests(unittest.TestCase):

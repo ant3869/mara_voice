@@ -37,7 +37,7 @@ TTS defaults to `cuda`. To override: `MARA_TTS_DEVICE=cpu` in `.env` or `-TtsDev
 
 ### TTS speed
 
-`MARA_TTS_INFERENCE_TIMESTEPS` (default 6) controls diffusion quality vs. speed. Lower is faster: try 4 for maximum speed, 8–10 for best quality. The trade-off is audio fidelity on long generations; very low values can introduce artifacts. Tune with `-TtsInferenceTimesteps N` or the GUI.
+`MARA_TTS_INFERENCE_TIMESTEPS` (default 4 from the launcher/GUI) controls diffusion quality vs. speed. Lower is faster: try 4 for maximum speed, 8–10 for best quality. The trade-off is audio fidelity on long generations; very low values can introduce artifacts. Tune with `-TtsInferenceTimesteps N` or the GUI.
 
 ### Streaming prebuffer
 
@@ -63,7 +63,18 @@ Async replies are on by default. Mara sends the agent request in the background 
 
 The dashboard shows live pipeline state: agent route, TTS server health (device, CUDA status), streaming mode, timing telemetry (dictation / generation / speech speeds), and the conversation log separated from raw event output.
 
+Each agent pane also supports typed chat now. Send straight to Hermes or OpenClaw from the GUI, keep the per-agent session/history settings, and speak the reply through the currently selected voice backend. If TTS fails, the text reply still lands in the log and the composer reports the voice error.
+
 **Auto-launch.** If you open the GUI while the voice stack is down and `start_mara.cmd` is present, the GUI automatically runs `start_mara.cmd -NoGui` once to bring up the TTS server and listener. The server guards against duplicate launches.
+
+### TTS backend
+
+The GUI and launcher can now run either TTS backend:
+
+- `voxcpm2` is the default local model path.
+- `voicebox` proxies speech generation to the running VoiceBox app.
+
+When `tts_backend=voicebox`, pick a VoiceBox server URL plus one profile for Mara/Hermes and one for OpenClaw. The GUI reads the available profiles live and can push updated VoiceBox profile mappings to the running TTS server without a full restart.
 
 ### Agent routing & sessions
 
@@ -93,6 +104,8 @@ When enabled, the active agent can speak up on its own. While the pipeline is id
 ### Voice profiles
 
 OpenClaw uses a separate male TTS voice profile with reference audio at `models/openclaw_voice_reference.wav`. Hermes uses the default Mara voice. The GUI saves the selected preset profile plus its voice-style text, and the reference is regenerated automatically when the style changes. The launcher refreshes stale GUI/TTS processes when their option schema or voice styles do not match the saved profile settings.
+
+If you switch to the `voicebox` backend, those VoxCPM2 reference/style settings stay saved but inactive; the active voices come from the selected VoiceBox profile IDs instead.
 
 ### Voice inbox
 

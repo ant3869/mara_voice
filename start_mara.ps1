@@ -7,7 +7,7 @@ param(
     [double]$SshTimeoutSeconds = 0,
     [double]$SshConnectTimeoutSeconds = 5,
     [double]$TtsTimeoutSeconds = 300,
-    [int]$TtsInferenceTimesteps = 6,
+    [int]$TtsInferenceTimesteps = 4,
     [double]$StatusIntervalSeconds = 10,
     [int]$SpokenReplyCharLimit = 900,
     [int]$TtsChunkCharLimit = 450,
@@ -68,9 +68,9 @@ $ErrorActionPreference = "Stop"
 $repoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $venvPython = Join-Path $repoRoot "venv\Scripts\python.exe"
 $askMaraScript = Join-Path $repoRoot "ask_mara.py"
-$ttsScript = Join-Path $repoRoot "mara_tts_server.py"
+$ttsScript = Join-Path $repoRoot "mara\tts_server.py"
 $listenerScript = Join-Path $repoRoot "jarvis_listener.py"
-$guiScript = Join-Path $repoRoot "mara_gui_server.py"
+$guiScript = Join-Path $repoRoot "mara\gui_server.py"
 $logDir = Join-Path $repoRoot "logs"
 $ttsStdoutLog = Join-Path $logDir "start_mara_tts.stdout.log"
 $ttsStderrLog = Join-Path $logDir "start_mara_tts.stderr.log"
@@ -88,6 +88,10 @@ $requiredGuiOptionKeys = @(
     "hermes_voice_style",
     "openclaw_voice_profile",
     "openclaw_voice_style"
+)
+
+$requiredGuiRouteProbes = @(
+    "/api/chat"
 )
 
 function Write-Step {
@@ -174,6 +178,27 @@ if (Test-Path $resolvedConfigPath) {
     }
     catch {
         throw "Could not read saved options from $resolvedConfigPath`: $($_.Exception.Message)"
+    }
+}
+
+# Read tts_backend from saved config to determine which health checks apply.
+# Must be after $savedConfig is loaded above.
+$isTtsBackendVoicebox = $false
+$savedVoiceboxUrl = ""
+$savedHermesVoiceboxProfileId = ""
+$savedOpenClawVoiceboxProfileId = ""
+if ($null -ne $savedConfig) {
+    if ($savedConfig.PSObject.Properties.Name -contains "tts_backend" -and [string]$savedConfig.tts_backend -eq "voicebox") {
+        $isTtsBackendVoicebox = $true
+    }
+    if ($savedConfig.PSObject.Properties.Name -contains "voicebox_url" -and -not [string]::IsNullOrWhiteSpace([string]$savedConfig.voicebox_url)) {
+        $savedVoiceboxUrl = [string]$savedConfig.voicebox_url
+    }
+    if ($savedConfig.PSObject.Properties.Name -contains "hermes_voicebox_profile_id" -and -not [string]::IsNullOrWhiteSpace([string]$savedConfig.hermes_voicebox_profile_id)) {
+        $savedHermesVoiceboxProfileId = [string]$savedConfig.hermes_voicebox_profile_id
+    }
+    if ($savedConfig.PSObject.Properties.Name -contains "openclaw_voicebox_profile_id" -and -not [string]::IsNullOrWhiteSpace([string]$savedConfig.openclaw_voicebox_profile_id)) {
+        $savedOpenClawVoiceboxProfileId = [string]$savedConfig.openclaw_voicebox_profile_id
     }
 }
 
@@ -500,6 +525,19 @@ function Test-TtsHealthUsable {
         return $false
     }
 
+    # VoiceBox backend: check that the running server is also VoiceBox, then done.
+    if ($isTtsBackendVoicebox) {
+        if (-not ($Health.PSObject.Properties.Name -contains "backend") -or [string]$Health.backend -ne "voicebox") {
+            return $false
+        }
+        return $true
+    }
+
+    # VoxCPM2 backend: reject if a VoiceBox server is running here.
+    if ($Health.PSObject.Properties.Name -contains "backend" -and [string]$Health.backend -eq "voicebox") {
+        return $false
+    }
+
     if ($Health.PSObject.Properties.Name -contains "inference_timesteps") {
         if ([int]$Health.inference_timesteps -ne $TtsInferenceTimesteps) {
             return $false
@@ -606,6 +644,17 @@ function Format-TtsHealthProblem {
 
     if ($null -eq $Health) {
         return "No health response received."
+    }
+
+    if ($isTtsBackendVoicebox) {
+        if (-not ($Health.PSObject.Properties.Name -contains "backend") -or [string]$Health.backend -ne "voicebox") {
+            return "Expected VoiceBox backend but TTS server is running a different backend. Stop the old TTS server and start again."
+        }
+        return "VoiceBox TTS health returned status '$($Health.status)'."
+    }
+
+    if ($Health.PSObject.Properties.Name -contains "backend" -and [string]$Health.backend -eq "voicebox") {
+        return "TTS server is running VoiceBox backend but config requests VoxCPM2. Stop the old TTS server and start again."
     }
 
     if ($RegenerateVoiceReference) {
@@ -757,6 +806,34 @@ function Get-GuiHealth {
     }
 }
 
+function Test-GuiRouteProbeUsable {
+    param([string]$Route)
+
+    try {
+        Invoke-WebRequest -Uri "$guiUrl$Route" -Method Get -TimeoutSec 2 | Out-Null
+        return $true
+    }
+    catch {
+        $response = $_.Exception.Response
+        if ($null -eq $response) {
+            return $false
+        }
+
+        $statusCode = [int]$response.StatusCode
+        return $statusCode -eq 405
+    }
+}
+
+function Test-GuiRouteProbesUsable {
+    foreach ($route in $requiredGuiRouteProbes) {
+        if (-not (Test-GuiRouteProbeUsable -Route $route)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
 function Test-GuiHealthUsable {
     param($Health)
 
@@ -773,6 +850,10 @@ function Test-GuiHealthUsable {
         if ($schemaKeys -notcontains $key) {
             return $false
         }
+    }
+
+    if (-not (Test-GuiRouteProbesUsable)) {
+        return $false
     }
 
     return $true
@@ -797,6 +878,12 @@ function Format-GuiHealthProblem {
     foreach ($key in $requiredGuiOptionKeys) {
         if ($schemaKeys -notcontains $key) {
             return "The server option schema is missing '$key'. Stop the old GUI server and start again."
+        }
+    }
+
+    foreach ($route in $requiredGuiRouteProbes) {
+        if (-not (Test-GuiRouteProbeUsable -Route $route)) {
+            return "The GUI server is missing required route '$route'. Stop the old GUI server and start again."
         }
     }
 
@@ -891,7 +978,7 @@ function Stop-ExistingLocalTtsServer {
         try {
             $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
             $commandLine = [string]$processInfo.CommandLine
-            if ($commandLine -notlike "*mara_tts_server.py*") {
+            if ($commandLine -notlike "*mara\\tts_server.py*" -and $commandLine -notlike "*mara/tts_server.py*") {
                 continue
             }
 
@@ -924,7 +1011,7 @@ function Stop-ExistingLocalGuiServer {
         try {
             $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
             $commandLine = [string]$processInfo.CommandLine
-            if ($commandLine -notlike "*mara_gui_server.py*") {
+            if ($commandLine -notlike "*mara\\gui_server.py*" -and $commandLine -notlike "*mara/gui_server.py*") {
                 continue
             }
 
@@ -1007,39 +1094,51 @@ else {
     $ttsArguments = @(
         $ttsScript,
         "--log-level",
-        $LogLevel,
-        "--device",
-        $TtsDevice,
-        "--inference-timesteps",
-        ([string]$TtsInferenceTimesteps)
+        $LogLevel
     )
 
-    if ($NoOptimize) {
-        $ttsArguments += "--no-optimize"
+    if ($isTtsBackendVoicebox) {
+        $ttsArguments += @("--tts-backend", "voicebox")
+        if ($savedVoiceboxUrl) {
+            $ttsArguments += @("--voicebox-url", $savedVoiceboxUrl)
+        }
+        if ($savedHermesVoiceboxProfileId) {
+            $ttsArguments += @("--hermes-voicebox-profile-id", $savedHermesVoiceboxProfileId)
+        }
+        if ($savedOpenClawVoiceboxProfileId) {
+            $ttsArguments += @("--openclaw-voicebox-profile-id", $savedOpenClawVoiceboxProfileId)
+        }
     }
+    else {
+        $ttsArguments += @("--device", $TtsDevice, "--inference-timesteps", ([string]$TtsInferenceTimesteps))
 
-    if ($VoiceReferencePath) {
-        $ttsArguments += @("--voice-reference-path", $VoiceReferencePath)
-    }
+        if ($NoOptimize) {
+            $ttsArguments += "--no-optimize"
+        }
 
-    if ($VoiceReferenceText) {
-        $ttsArguments += @("--voice-reference-text", $VoiceReferenceText)
-    }
+        if ($VoiceReferencePath) {
+            $ttsArguments += @("--voice-reference-path", $VoiceReferencePath)
+        }
 
-    if ($DisableVoiceReference) {
-        $ttsArguments += "--disable-voice-reference"
-    }
+        if ($VoiceReferenceText) {
+            $ttsArguments += @("--voice-reference-text", $VoiceReferenceText)
+        }
 
-    if ($RegenerateVoiceReference) {
-        $ttsArguments += "--regenerate-voice-reference"
-    }
+        if ($DisableVoiceReference) {
+            $ttsArguments += "--disable-voice-reference"
+        }
 
-    if ($HermesVoiceStyle) {
-        $ttsArguments += @("--hermes-voice-style", $HermesVoiceStyle)
-    }
+        if ($RegenerateVoiceReference) {
+            $ttsArguments += "--regenerate-voice-reference"
+        }
 
-    if ($OpenClawVoiceStyle) {
-        $ttsArguments += @("--openclaw-voice-style", $OpenClawVoiceStyle)
+        if ($HermesVoiceStyle) {
+            $ttsArguments += @("--hermes-voice-style", $HermesVoiceStyle)
+        }
+
+        if ($OpenClawVoiceStyle) {
+            $ttsArguments += @("--openclaw-voice-style", $OpenClawVoiceStyle)
+        }
     }
 
     Remove-Item -Path $ttsStdoutLog, $ttsStderrLog -ErrorAction SilentlyContinue

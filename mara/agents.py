@@ -16,7 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
-from mara_env import load_dotenv
+from mara.env import load_dotenv
 
 
 load_dotenv()
@@ -25,7 +25,7 @@ AGENT_HERMES = "hermes"
 AGENT_OPENCLAW = "openclaw"
 VALID_AGENT_IDS = (AGENT_HERMES, AGENT_OPENCLAW)
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_ACTIVE_AGENT = os.getenv("MARA_ACTIVE_AGENT", AGENT_HERMES)
 DEFAULT_OPENCLAW_BASE_URL = os.getenv("MARA_OPENCLAW_BASE_URL", "http://192.168.0.65:8645/v1")
 DEFAULT_OPENCLAW_MODEL = os.getenv("MARA_OPENCLAW_MODEL", "gemini 3.1 pro")

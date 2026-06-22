@@ -6,7 +6,7 @@ import time
 import unittest
 from pathlib import Path
 
-from mara_agents import (
+from mara.agents import (
     AGENT_HERMES,
     AGENT_OPENCLAW,
     AgentSettings,

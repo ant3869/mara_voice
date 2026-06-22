@@ -22,15 +22,15 @@ Mara Voice should keep Hermes as the default path while allowing the user to swi
 
 ### Step 1: Add Shared Agent Routing Adapters
 
-**Files:** `mara_agents.py`, `mara_pipeline.py`, `jarvis_listener.py`, `tests/test_agent_routing.py`
+**Files:** `mara/agents.py`, `mara/pipeline.py`, `jarvis_listener.py`, `tests/test_agent_routing.py`
 
-**What:** Introduce a small routing module with two adapters: `HermesSshAgent` and `OpenClawHttpAgent`. Move the duplicated SSH prompt logic from `mara_pipeline.py` and `jarvis_listener.py` behind a shared `ask_agent()` function so both one-shot CLI and live voice listener use the same routing rules.
+**What:** Introduce a small routing module with two adapters: `HermesSshAgent` and `OpenClawHttpAgent`. Move the duplicated SSH prompt logic from `mara/pipeline.py` and `jarvis_listener.py` behind a shared `ask_agent()` function so both one-shot CLI and live voice listener use the same routing rules.
 
 **Testing:** Unit test that `agent_id=hermes` builds the existing SSH behavior and that unknown agent ids fail with a clear error. Run existing tests to confirm Hermes behavior is unchanged.
 
 ### Step 2: Implement OpenClaw HTTP Adapter
 
-**Files:** `mara_agents.py`, `mara_config.py`, `ask_mara.py`, `jarvis_listener.py`, `start_mara.ps1`, `tests/test_agent_routing.py`
+**Files:** `mara/agents.py`, `mara/config.py`, `ask_mara.py`, `jarvis_listener.py`, `start_mara.ps1`, `tests/test_agent_routing.py`
 
 **What:** Add OpenClaw settings: `active_agent`, `openclaw_base_url`, `openclaw_model`, and `openclaw_timeout_seconds`. Read the API key from `MARA_OPENCLAW_API_KEY`. The adapter sends `messages=[{"role":"user","content": prompt}]` to `/chat/completions`, parses `choices[0].message.content`, and never logs the bearer token.
 
@@ -38,7 +38,7 @@ Mara Voice should keep Hermes as the default path while allowing the user to swi
 
 ### Step 3: Add Live GUI Route Switching
 
-**Files:** `mara_agent_state.py`, `mara_gui_server.py`, `gui/static/index.html`, `jarvis_listener.py`, `mara_events.py`, `tests/test_gui_server.py`
+**Files:** `mara/agent_state.py`, `mara/gui_server.py`, `gui/static/index.html`, `jarvis_listener.py`, `mara/events.py`, `tests/test_gui_server.py`
 
 **What:** Add a tiny runtime route-state file under `config/`, for example `config/mara_agent_route.runtime.json`, ignored by git. The GUI writes `active_agent` for normal switching and `next_agent` for one-shot routing. Before each prompt, the listener reads the route state and consumes `next_agent` if present, so a GUI button can route the next prompt to OpenClaw without restarting.
 
@@ -46,7 +46,7 @@ Mara Voice should keep Hermes as the default path while allowing the user to swi
 
 ### Step 4: Surface Agent State In Terminal And GUI
 
-**Files:** `jarvis_listener.py`, `mara_pipeline.py`, `mara_gui_state.py`, `gui/static/index.html`
+**Files:** `jarvis_listener.py`, `mara/pipeline.py`, `mara/gui_state.py`, `gui/static/index.html`
 
 **What:** Emit status/events such as `Sending prompt to OpenClaw` or `Sending prompt to Hermes`, include active agent in event details, and add an `Active Agent` field to the GUI runtime panel. Add compact GUI controls: a segmented `Hermes / OpenClaw` switch and a `Next Prompt: OpenClaw` command button.
 
@@ -54,7 +54,7 @@ Mara Voice should keep Hermes as the default path while allowing the user to swi
 
 ### Step 5: Add Diagnostics And Startup Guardrails
 
-**Files:** `mara_agents.py`, `mara_pipeline.py`, `ask_mara.py`, `start_mara.ps1`, `README.md`
+**Files:** `mara/agents.py`, `mara/pipeline.py`, `ask_mara.py`, `start_mara.ps1`, `README.md`
 
 **What:** Keep existing SSH diagnostics for Hermes. Add OpenClaw diagnostics using `/v1/models` when an API key is configured. If OpenClaw is selected but unreachable, print an actionable message: enable `API_SERVER_ENABLED=true`, restart the gateway on the Dell rig, confirm port `8645`, and configure `MARA_OPENCLAW_API_KEY`.
 

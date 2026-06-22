@@ -6,14 +6,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mara_agent_state import (
+from mara.agent_state import (
     AgentRouteState,
     consume_agent_route,
     load_agent_route_state,
     save_agent_route_state,
     update_agent_route_state,
 )
-from mara_agents import AgentSettings, _ask_hermes_ssh, _extract_openclaw_reply, ask_agent, record_session_turn, redact_url
+from mara.agents import AgentSettings, _ask_hermes_ssh, _extract_openclaw_reply, ask_agent, record_session_turn, redact_url
 
 
 class FakeResponse:
@@ -102,7 +102,7 @@ class AgentRoutingTests(unittest.TestCase):
             )
             record_session_turn(settings, "hermes", "old question", "old answer")
 
-            with patch("mara_agents.subprocess.Popen", return_value=FakeProcess()) as popen:
+            with patch("mara.agents.subprocess.Popen", return_value=FakeProcess()) as popen:
                 reply = _ask_hermes_ssh("new question", settings, _NullLogger(), None, 0)
 
         remote_command = popen.call_args[0][0][-1]
@@ -139,7 +139,7 @@ class AgentRoutingTests(unittest.TestCase):
             )
 
             ask_agent("claw question", openclaw_settings, logger=_NullLogger(), requests_session=openclaw_session)
-            with patch("mara_agents.subprocess.Popen", return_value=FakeProcess()) as popen:
+            with patch("mara.agents.subprocess.Popen", return_value=FakeProcess()) as popen:
                 _ask_hermes_ssh("mara question", hermes_settings, _NullLogger(), None, 0)
 
             openclaw_payload = json.loads(openclaw_session.calls[0]["data"])

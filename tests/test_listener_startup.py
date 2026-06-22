@@ -14,7 +14,7 @@ from jarvis_listener import (
     find_existing_capture_files,
     is_pending_followup_reply,
 )
-from mara_agents import AgentReply, AgentSettings
+from mara.agents import AgentReply, AgentSettings
 
 
 class ListenerStartupTests(unittest.TestCase):
@@ -68,6 +68,35 @@ class ListenerStartupTests(unittest.TestCase):
             )
 
         self.assertEqual([path.name for path in captures], ["missed.wav"])
+
+    def test_near_duplicate_voicebox_captures_are_skipped_after_transcription(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_wav = tmp_path / "first.wav"
+            second_wav = tmp_path / "second.wav"
+            first_wav.write_bytes(b"fake audio")
+            second_wav.write_bytes(b"fake audio copy")
+
+            processor = _test_processor(tmp_path)
+            settings = AgentSettings(active_agent="hermes", agent_session_history_path=tmp_path / "sessions.json")
+            transcripts = {
+                first_wav: "Can you hear me? Is this working?",
+                second_wav: "Can you hear me is this working",
+            }
+            events: list[tuple[object, ...]] = []
+            sent_prompts: list[str] = []
+            processor._wait_for_stable_file = lambda _path: True
+            processor._transcribe_wav = lambda path: transcripts[Path(path)]
+            processor._agent_settings_for_next_route = lambda: settings
+            processor._append_event = lambda *args, **_kwargs: events.append(args)
+            processor._start_async_agent_reply = lambda text, _start, _settings: sent_prompts.append(text)
+
+            with patch("jarvis_listener.emit_status", lambda *_args, **_kwargs: None), patch("builtins.print"):
+                processor._process_wav_impl(first_wav)
+                processor._process_wav_impl(second_wav)
+
+        self.assertEqual(sent_prompts, ["Can you hear me? Is this working?"])
+        self.assertEqual([event[1] for event in events if event[1] == "USER"], ["USER"])
 
     def test_async_agent_reply_speaks_ack_before_final_reply(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

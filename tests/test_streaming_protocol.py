@@ -5,8 +5,8 @@ import unittest
 import numpy as np
 from fastapi.testclient import TestClient
 
-import mara_tts_server
-from mara_streaming import (
+import mara.tts_server as mara_tts_server
+from mara.streaming import (
     STREAM_CHANNELS_HEADER,
     STREAM_DTYPE,
     STREAM_DTYPE_HEADER,

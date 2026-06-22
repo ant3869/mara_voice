@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import io
 import json
 import os
@@ -17,8 +18,8 @@ import requests
 import sounddevice as sd
 import soundfile as sf
 
-from mara_agent_state import DEFAULT_AGENT_ROUTE_STATE_PATH, consume_agent_route, update_agent_route_state
-from mara_agents import (
+from mara.agent_state import DEFAULT_AGENT_ROUTE_STATE_PATH, consume_agent_route, update_agent_route_state
+from mara.agents import (
     DEFAULT_ACTIVE_AGENT,
     DEFAULT_AGENT_SESSION_HISTORY_MESSAGES,
     DEFAULT_AGENT_SESSION_HISTORY_PATH,
@@ -37,8 +38,8 @@ from mara_agents import (
     normalize_agent_id,
     redact_url,
 )
-from mara_events import append_event, read_recent_events
-from mara_pipeline import (
+from mara.events import append_event, read_recent_events
+from mara.pipeline import (
     DEFAULT_CAPTURE_DIR,
     DEFAULT_HERMES_COMMAND,
     DEFAULT_SSH_TARGET,
@@ -46,8 +47,8 @@ from mara_pipeline import (
     emit_status,
     format_output_devices,
 )
-from mara_safety import redact_sensitive_text
-from mara_streaming import (
+from mara.safety import redact_sensitive_text
+from mara.streaming import (
     Float32PcmStreamDecoder,
     STREAM_CHANNELS_HEADER,
     STREAM_DTYPE,
@@ -70,6 +71,11 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_VOICEBOX_API = "http://127.0.0.1:17493/transcribe"
 DEFAULT_TTS_URL = "http://127.0.0.1:8000/tts"
 DEFAULT_TRANSCRIBE_TIMEOUT_SECONDS = float(os.getenv("MARA_TRANSCRIBE_TIMEOUT", "60"))
+DEFAULT_CAPTURE_DUPLICATE_BIRTH_WINDOW_SECONDS = float(
+    os.getenv("MARA_CAPTURE_DUPLICATE_BIRTH_WINDOW_SECONDS", "1.0")
+)
+DEFAULT_CAPTURE_DUPLICATE_TEXT_SIMILARITY = float(os.getenv("MARA_CAPTURE_DUPLICATE_TEXT_SIMILARITY", "0.92"))
+DEFAULT_CAPTURE_DUPLICATE_HISTORY_SECONDS = float(os.getenv("MARA_CAPTURE_DUPLICATE_HISTORY_SECONDS", "120"))
 DEFAULT_TTS_RETRY_ATTEMPTS = int(os.getenv("MARA_TTS_RETRY_ATTEMPTS", "1"))
 DEFAULT_STATUS_INTERVAL_SECONDS = float(os.getenv("MARA_STATUS_INTERVAL", "10"))
 DEFAULT_SSH_CONNECT_TIMEOUT_SECONDS = float(os.getenv("MARA_SSH_CONNECT_TIMEOUT", "5"))
@@ -300,6 +306,9 @@ class WavCaptureProcessor:
         logger,
         agent_route_state_path: Path = DEFAULT_AGENT_ROUTE_STATE_PATH,
         dedupe_window_seconds: float = 2.0,
+        capture_duplicate_birth_window_seconds: float = DEFAULT_CAPTURE_DUPLICATE_BIRTH_WINDOW_SECONDS,
+        capture_duplicate_text_similarity: float = DEFAULT_CAPTURE_DUPLICATE_TEXT_SIMILARITY,
+        capture_duplicate_history_seconds: float = DEFAULT_CAPTURE_DUPLICATE_HISTORY_SECONDS,
         transcribe_timeout_seconds: float = DEFAULT_TRANSCRIBE_TIMEOUT_SECONDS,
         ssh_timeout_seconds: float | None = DEFAULT_SSH_TIMEOUT_SECONDS,
         openclaw_timeout_seconds: float | None = DEFAULT_OPENCLAW_TIMEOUT_SECONDS,
@@ -348,6 +357,9 @@ class WavCaptureProcessor:
         self.logger = logger
         self.agent_route_state_path = agent_route_state_path
         self.dedupe_window_seconds = dedupe_window_seconds
+        self.capture_duplicate_birth_window_seconds = max(0.0, capture_duplicate_birth_window_seconds)
+        self.capture_duplicate_text_similarity = min(1.0, max(0.0, capture_duplicate_text_similarity))
+        self.capture_duplicate_history_seconds = max(1.0, capture_duplicate_history_seconds)
         self.transcribe_timeout_seconds = transcribe_timeout_seconds
         self.ssh_timeout_seconds = ssh_timeout_seconds
         self.openclaw_timeout_seconds = openclaw_timeout_seconds
@@ -389,6 +401,8 @@ class WavCaptureProcessor:
         self.playback_lock = Lock()
         self.recent_files: dict[Path, float] = {}
         self.processed_files: dict[Path, float] = {}
+        self.transcription_dedupe_lock = Lock()
+        self.recent_transcriptions: list[dict[str, object]] = []
         self.processed_file_retention_seconds = 24 * 60 * 60
         # Idle tracking for the heartbeat: a turn is "in flight" from the moment a
         # capture starts processing until any async worker/follow-up for it finishes.
@@ -560,6 +574,89 @@ class WavCaptureProcessor:
         ]
         for key in stale_processed_keys:
             self.processed_files.pop(key, None)
+
+    @staticmethod
+    def _capture_created_seconds(file_path: Path) -> float | None:
+        try:
+            stat_result = file_path.stat()
+        except OSError:
+            return None
+        birth_time = getattr(stat_result, "st_birthtime", None)
+        if birth_time is not None:
+            return float(birth_time)
+        return float(stat_result.st_ctime)
+
+    @staticmethod
+    def _normalize_transcription_for_dedupe(text: str) -> str:
+        normalized = "".join(character.lower() if character.isalnum() else " " for character in text)
+        return " ".join(normalized.split())
+
+    def _purge_old_transcriptions(self, now: float) -> None:
+        self.recent_transcriptions = [
+            entry
+            for entry in self.recent_transcriptions
+            if now - float(entry.get("seen_seconds", 0.0)) <= self.capture_duplicate_history_seconds
+        ]
+
+    def _is_duplicate_transcription(self, wav_path: Path, text: str) -> bool:
+        normalized = self._normalize_transcription_for_dedupe(text)
+        if not normalized:
+            return False
+
+        now = time.time()
+        created_seconds = self._capture_created_seconds(wav_path)
+        with self.transcription_dedupe_lock:
+            self._purge_old_transcriptions(now)
+            for entry in self.recent_transcriptions:
+                previous_created = entry.get("created_seconds")
+                if created_seconds is not None and isinstance(previous_created, (float, int)):
+                    created_delta = abs(created_seconds - float(previous_created))
+                    born_together = created_delta <= self.capture_duplicate_birth_window_seconds
+                else:
+                    created_delta = now - float(entry.get("seen_seconds", now))
+                    born_together = created_delta <= self.capture_duplicate_birth_window_seconds
+                if not born_together:
+                    continue
+
+                previous_text = str(entry.get("normalized_text", ""))
+                similarity = (
+                    1.0
+                    if normalized == previous_text
+                    else difflib.SequenceMatcher(None, normalized, previous_text).ratio()
+                )
+                if similarity < self.capture_duplicate_text_similarity:
+                    continue
+
+                previous_file = str(entry.get("file_name", "<unknown>"))
+                self.logger.info(
+                    "Skipping likely duplicate voice capture %s; similar to %s "
+                    "(created_delta=%.3fs, similarity=%.3f)",
+                    wav_path.name,
+                    previous_file,
+                    created_delta,
+                    similarity,
+                )
+                emit_status(
+                    self.logger,
+                    "LISTENING",
+                    f"Skipped duplicate voice capture {wav_path.name}",
+                    {
+                        "duplicate_of": previous_file,
+                        "created_delta_seconds": round(created_delta, 3),
+                        "similarity": round(similarity, 3),
+                    },
+                )
+                return True
+
+            self.recent_transcriptions.append(
+                {
+                    "file_name": wav_path.name,
+                    "created_seconds": created_seconds,
+                    "seen_seconds": now,
+                    "normalized_text": normalized,
+                }
+            )
+            return False
 
     def _wait_for_stable_file(
         self,
@@ -1100,6 +1197,9 @@ class WavCaptureProcessor:
         transcribed_text = self._transcribe_wav(wav_path)
         transcribe_time = time.monotonic() - transcribe_start
         if not transcribed_text:
+            emit_status(self.logger, "LISTENING", "Waiting for next capture")
+            return
+        if self._is_duplicate_transcription(wav_path, transcribed_text):
             emit_status(self.logger, "LISTENING", "Waiting for next capture")
             return
 

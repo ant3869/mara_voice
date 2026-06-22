@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config" / "mara_voice.local.json"
 
 OPTION_SCHEMA: dict[str, dict[str, Any]] = {
@@ -42,7 +42,7 @@ OPTION_SCHEMA: dict[str, dict[str, Any]] = {
     "agent_session_persistence": {"type": "bool", "default": True, "restart_required": True},
     "spoken_reply_char_limit": {"type": "int", "default": 900, "min": 0, "max": 12000, "restart_required": True},
     "tts_chunk_char_limit": {"type": "int", "default": 450, "min": 0, "max": 12000, "restart_required": True},
-    "tts_inference_timesteps": {"type": "int", "default": 6, "min": 1, "max": 50, "restart_required": True},
+    "tts_inference_timesteps": {"type": "int", "default": 4, "min": 1, "max": 50, "restart_required": True},
     "tts_timeout_seconds": {"type": "float", "default": 300.0, "min": 0.0, "max": 3600.0, "restart_required": True},
     "ssh_timeout_seconds": {"type": "float", "default": 0.0, "min": 0.0, "max": 3600.0, "restart_required": True},
     "ssh_connect_timeout_seconds": {"type": "float", "default": 5.0, "min": 1.0, "max": 120.0, "restart_required": True},
@@ -93,6 +93,27 @@ OPTION_SCHEMA: dict[str, dict[str, Any]] = {
         "type": "str",
         "default": "A clear adult male speaking voice with a steady lower register, calm conversational pace, natural articulation, and no humming, sighing, singing, or nonverbal sounds",
         "restart_required": True,
+    },
+    "tts_backend": {
+        "type": "str",
+        "default": "voxcpm2",
+        "choices": ("voxcpm2", "voicebox"),
+        "restart_required": True,
+    },
+    "voicebox_url": {
+        "type": "str",
+        "default": "http://127.0.0.1:17493",
+        "restart_required": True,
+    },
+    "hermes_voicebox_profile_id": {
+        "type": "str",
+        "default": "",
+        "restart_required": False,
+    },
+    "openclaw_voicebox_profile_id": {
+        "type": "str",
+        "default": "",
+        "restart_required": False,
     },
 }
 

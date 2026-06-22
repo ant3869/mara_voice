@@ -15,8 +15,8 @@ import requests
 import sounddevice as sd
 import soundfile as sf
 
-from mara_events import append_event
-from mara_agents import (
+from mara.events import append_event
+from mara.agents import (
     DEFAULT_ACTIVE_AGENT,
     DEFAULT_AGENT_SESSION_HISTORY_MESSAGES,
     DEFAULT_AGENT_SESSION_HISTORY_PATH,
@@ -32,10 +32,10 @@ from mara_agents import (
     check_openclaw_health,
     redact_url,
 )
-from mara_safety import redact_sensitive_text
+from mara.safety import redact_sensitive_text
 
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 def _default_capture_dir() -> Path:
@@ -336,7 +336,7 @@ def run_diagnostics(
             tts_health.get("error") or tts_health.get("payload"),
         )
         logger.warning(
-            "If the TTS server is not running, start it with: python mara_tts_server.py"
+            "If the TTS server is not running, start it with: python -m mara.tts_server"
         )
 
     if include_ssh:
@@ -461,7 +461,7 @@ def synthesize_speech(
         )
     except requests.RequestException as exc:
         raise RuntimeError(
-            f"Could not reach the TTS server at {config.tts_url}: {exc}. Start it with `python mara_tts_server.py`."
+            f"Could not reach the TTS server at {config.tts_url}: {exc}. Start it with `python -m mara.tts_server`."
         ) from exc
 
     elapsed = time.perf_counter() - start_time

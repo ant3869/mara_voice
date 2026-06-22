@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from mara_events import DEFAULT_EVENT_LOG_PATH, read_recent_events
+from mara.events import DEFAULT_EVENT_LOG_PATH, read_recent_events
 
 
 @dataclass(slots=True)

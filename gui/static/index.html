@@ -442,6 +442,30 @@
       border-bottom: 5px solid transparent;
     }
 
+    .button-icon.send::before {
+      content: "";
+      position: absolute;
+      left: 2px;
+      top: 7px;
+      width: 10px;
+      height: 1.7px;
+      background: currentColor;
+      transform: rotate(-32deg);
+      transform-origin: right center;
+    }
+
+    .button-icon.send::after {
+      content: "";
+      position: absolute;
+      right: 2px;
+      top: 3px;
+      width: 7px;
+      height: 7px;
+      border-top: 1.7px solid currentColor;
+      border-right: 1.7px solid currentColor;
+      transform: rotate(45deg);
+    }
+
     .page-content {
       padding: 24px 30px 38px;
       min-width: 0;
@@ -580,7 +604,7 @@
     .chat-panel {
       min-height: 420px;
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--surface);
@@ -619,6 +643,43 @@
       gap: 10px;
       align-content: start;
     }
+
+    .chat-composer {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border-top: 1px solid var(--line-soft);
+      background: #111219;
+    }
+
+    .chat-composer textarea {
+      min-height: 72px;
+      max-height: 180px;
+      resize: vertical;
+      background: #0b0c11;
+      border-color: #252733;
+      line-height: 1.4;
+    }
+
+    .composer-actions {
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .composer-status {
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .composer-status.error { color: var(--red); }
+    .composer-status.good { color: var(--green); }
+
+    .chat-composer button { min-width: 92px; }
 
     .chat-line {
       display: grid;
@@ -974,6 +1035,8 @@
       .status-strip { grid-template-columns: 1fr; }
       .chat-line { grid-template-columns: 1fr; }
       .chat-log { max-height: 420px; }
+      .composer-actions { align-items: stretch; flex-direction: column; }
+      .chat-composer button { width: 100%; justify-content: center; }
       .events .time { width: 118px; }
       .events .status { width: 104px; }
       .events .agent { display: none; }
@@ -1133,6 +1196,16 @@
                 <div class="chat-log" id="hermesLog">
                   <p class="empty">No Hermes conversation yet.</p>
                 </div>
+                <form class="chat-composer" data-chat-agent="hermes">
+                  <textarea id="hermesInput" aria-label="Message Hermes" placeholder="Message Hermes..." rows="2"></textarea>
+                  <div class="composer-actions">
+                    <span class="composer-status" id="hermesChatStatus"></span>
+                    <button class="primary icon-text" id="hermesSend" type="submit">
+                      <span class="button-icon send" aria-hidden="true"></span>
+                      <span>Send</span>
+                    </button>
+                  </div>
+                </form>
               </div>
 
               <div class="chat-panel openclaw">
@@ -1143,6 +1216,16 @@
                 <div class="chat-log" id="openclawLog">
                   <p class="empty">No Claw conversation yet.</p>
                 </div>
+                <form class="chat-composer" data-chat-agent="openclaw">
+                  <textarea id="openclawInput" aria-label="Message Claw" placeholder="Message Claw..." rows="2"></textarea>
+                  <div class="composer-actions">
+                    <span class="composer-status" id="openclawChatStatus"></span>
+                    <button class="primary icon-text" id="openclawSend" type="submit">
+                      <span class="button-icon send" aria-hidden="true"></span>
+                      <span>Send</span>
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
 
@@ -1275,7 +1358,44 @@
 
               <div class="settings-pane" id="settings-voice">
                 <div class="settings-grid">
-                  <div class="settings-card">
+                  <div class="settings-card" id="card-tts-backend">
+                    <h3>TTS Backend</h3>
+                    <label>Voice engine
+                      <select id="tts_backend" name="tts_backend" title="Which TTS engine generates the voice output.">
+                        <option value="voxcpm2">VoxCPM2 (local model)</option>
+                        <option value="voicebox">VoiceBox (Qwen3-TTS)</option>
+                      </select>
+                      <span class="help">VoxCPM2 runs locally via the TTS server. VoiceBox uses the running VoiceBox app with cloned voices.</span>
+                    </label>
+                    <label id="voicebox-url-row" style="display:none">VoiceBox server URL
+                      <input id="voicebox_url" name="voicebox_url" type="text" placeholder="http://127.0.0.1:17493" title="Base URL of the VoiceBox API server.">
+                      <span class="help">Must match the port VoiceBox is running on (default 17493).</span>
+                    </label>
+                  </div>
+
+                  <div class="settings-card wide" id="card-voicebox-voices" style="display:none">
+                    <h3>VoiceBox Voices</h3>
+                    <div class="settings-grid">
+                      <div style="display:grid;gap:10px;">
+                        <label>Mara (Hermes) voice
+                          <select id="hermes_voicebox_profile_id" name="hermes_voicebox_profile_id" title="VoiceBox cloned voice for Mara.">
+                            <option value="">— not configured —</option>
+                          </select>
+                          <span class="help">Pick a cloned or preset voice from VoiceBox for Mara.</span>
+                        </label>
+                      </div>
+                      <div style="display:grid;gap:10px;">
+                        <label>OpenClaw voice
+                          <select id="openclaw_voicebox_profile_id" name="openclaw_voicebox_profile_id" title="VoiceBox cloned voice for OpenClaw.">
+                            <option value="">— not configured —</option>
+                          </select>
+                          <span class="help">Pick a cloned or preset voice from VoiceBox for OpenClaw.</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="settings-card" id="card-voxcpm2-streaming">
                     <h3>Streaming</h3>
                     <label class="check-row">
                       <span>
@@ -1318,7 +1438,7 @@
                     </label>
                   </div>
 
-                  <div class="settings-card">
+                  <div class="settings-card" id="card-voxcpm2-device">
                     <h3>Device</h3>
                     <label>TTS device
                       <input id="tts_device" name="tts_device" type="text" placeholder="auto" title="Device used by VoxCPM.">
@@ -1335,7 +1455,7 @@
                     </label>
                   </div>
 
-                  <div class="settings-card wide">
+                  <div class="settings-card wide" id="card-voxcpm2-profiles">
                     <h3>Voice Profiles</h3>
                     <div class="settings-grid">
                       <div style="display:grid;gap:10px;">
@@ -1361,7 +1481,7 @@
                     </div>
                   </div>
 
-                  <div class="settings-card">
+                  <div class="settings-card" id="card-voxcpm2-reference">
                     <h3>Reference</h3>
                     <label>Voice reference WAV path
                       <input id="voice_reference_path" name="voice_reference_path" type="text" placeholder="models\mara_voice_reference.wav" title="Path to the persistent reference WAV.">
@@ -1501,7 +1621,9 @@
       "audio_device", "tts_device", "capture_dir", "hermes_command",
       "voice_reference_path", "voice_reference_text",
       "hermes_voice_profile", "openclaw_voice_profile",
-      "hermes_voice_style", "openclaw_voice_style"
+      "hermes_voice_style", "openclaw_voice_style",
+      "tts_backend", "voicebox_url",
+      "hermes_voicebox_profile_id", "openclaw_voicebox_profile_id"
     ];
 
     const MARA_VOICE_PROFILES = [
@@ -1568,7 +1690,83 @@
       syncProfileSelect("hermes_voice_profile", "hermes_voice_style", MARA_VOICE_PROFILES, options.hermes_voice_profile);
       syncProfileSelect("openclaw_voice_profile", "openclaw_voice_style", OPENCLAW_VOICE_PROFILES, options.openclaw_voice_profile);
     }
+
+    const VOXCPM2_ONLY_CARDS = ["card-voxcpm2-device", "card-voxcpm2-profiles", "card-voxcpm2-reference"];
+
+    function syncBackendVisibility() {
+      const backend = (el("tts_backend") || {}).value || "voxcpm2";
+      const isVoicebox = backend === "voicebox";
+      const urlRow = el("voicebox-url-row");
+      if (urlRow) urlRow.style.display = isVoicebox ? "" : "none";
+      const vbCard = el("card-voicebox-voices");
+      if (vbCard) vbCard.style.display = isVoicebox ? "" : "none";
+      for (const cardId of VOXCPM2_ONLY_CARDS) {
+        const card = el(cardId);
+        if (card) card.style.display = isVoicebox ? "none" : "";
+      }
+    }
+
+    let _voiceboxProfilesCache = null;
+
+    async function fetchVoiceboxProfiles() {
+      if (_voiceboxProfilesCache) return _voiceboxProfilesCache;
+      try {
+        const resp = await fetch("/api/voicebox/profiles");
+        if (!resp.ok) return [];
+        _voiceboxProfilesCache = await resp.json();
+        return _voiceboxProfilesCache;
+      } catch {
+        return [];
+      }
+    }
+
+    function populateVoiceboxSelect(selectId, profiles, currentValue) {
+      const select = el(selectId);
+      if (!select) return;
+      const prev = select.value;
+      select.replaceChildren();
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "— not configured —";
+      select.append(none);
+      for (const p of profiles) {
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        const tag = p.voice_type === "cloned" ? "cloned" : p.preset_engine || p.voice_type || "preset";
+        opt.textContent = `${p.name} [${tag}]`;
+        select.append(opt);
+      }
+      select.value = currentValue || prev || "";
+    }
+
+    async function syncVoiceboxSelects(options = {}) {
+      const profiles = await fetchVoiceboxProfiles();
+      populateVoiceboxSelect("hermes_voicebox_profile_id", profiles, options.hermes_voicebox_profile_id);
+      populateVoiceboxSelect("openclaw_voicebox_profile_id", profiles, options.openclaw_voicebox_profile_id);
+    }
+
     const el = (id) => document.getElementById(id);
+    const chatScrollState = {
+      hermes: { stick: true, force: false },
+      openclaw: { stick: true, force: false },
+    };
+
+    function chatNodePrefix(agent) {
+      return agent === "openclaw" ? "openclaw" : "hermes";
+    }
+
+    function isNearChatBottom(log) {
+      if (!log) return true;
+      return log.scrollHeight - log.scrollTop - log.clientHeight < 56;
+    }
+
+    function setComposerStatus(agent, message, state = "") {
+      const status = el(`${chatNodePrefix(agent)}ChatStatus`);
+      if (!status) return;
+      status.textContent = message;
+      status.classList.remove("error", "good");
+      if (state) status.classList.add(state);
+    }
 
     function fmtTime(value) {
       if (!value) return "No updates";
@@ -1854,6 +2052,9 @@
       const log = el(`${agent}Log`);
       const count = el(`${agent}Count`);
       const visible = entries.slice(-60);
+      const scrollState = chatScrollState[agent] || { stick: true, force: false };
+      const shouldScrollDown = scrollState.force || scrollState.stick || isNearChatBottom(log);
+      const previousScrollTop = log.scrollTop;
       log.replaceChildren();
       count.textContent = `${entries.length} ${entries.length === 1 ? "entry" : "entries"}`;
       if (!visible.length) {
@@ -1861,10 +2062,18 @@
         empty.className = "empty";
         empty.textContent = agent === "openclaw" ? "No Claw conversation yet." : "No Hermes conversation yet.";
         log.append(empty);
+        scrollState.force = false;
+        scrollState.stick = true;
         return;
       }
       for (const entry of visible) log.append(renderChatLine(agent, entry));
-      log.scrollTop = log.scrollHeight;
+      if (shouldScrollDown) {
+        log.scrollTop = log.scrollHeight;
+      } else {
+        log.scrollTop = previousScrollTop;
+      }
+      scrollState.force = false;
+      scrollState.stick = isNearChatBottom(log);
     }
 
     function renderAgentLogs(events, route) {
@@ -1961,6 +2170,8 @@
       renderAudioDevices(payload.audio_devices || [], options.audio_device);
       renderRoute(payload.agent_route || {});
       syncProfileSelects(options);
+      syncBackendVisibility();
+      syncVoiceboxSelects(options);
       return payload;
     }
 
@@ -1982,7 +2193,9 @@
         renderAudioDevices(payload.audio_devices || [], payload.options.audio_device);
         renderRoute(payload.agent_route || {});
         syncProfileSelects(payload.options || {});
-        setSaveStatus("Saved. Route applies live; voice style updates the running TTS server; other settings apply after restart.");
+        syncBackendVisibility();
+        syncVoiceboxSelects(payload.options || {});
+        setSaveStatus("Saved. Route applies live; voice style / VoiceBox profiles update the running TTS server; other settings apply after restart.");
       } catch (error) {
         setSaveStatus(error.message);
       } finally {
@@ -2010,6 +2223,53 @@
       if (!response.ok) throw new Error(payload.detail || `route ${response.status}`);
       renderRoute(payload);
       return payload;
+    }
+
+    async function sendChatMessage(agent, event) {
+      event.preventDefault();
+      const prefix = chatNodePrefix(agent);
+      const input = el(`${prefix}Input`);
+      const button = el(`${prefix}Send`);
+      const text = input.value.trim();
+      if (!text) {
+        input.focus();
+        return;
+      }
+
+      chatScrollState[prefix].force = true;
+      input.disabled = true;
+      button.disabled = true;
+      setComposerStatus(prefix, `Sending to ${agentLabel(prefix)}...`);
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ agent: prefix, text })
+        });
+        let payload = {};
+        try {
+          payload = await response.json();
+        } catch (error) {
+          payload = {};
+        }
+        if (!response.ok) throw new Error(payload.detail || `chat ${response.status}`);
+        input.value = "";
+        chatScrollState[prefix].force = true;
+        if (payload.voice_ok === false) {
+          setComposerStatus(prefix, `Reply received, but voice failed: ${payload.voice_error || "TTS unavailable"}.`, "error");
+        } else {
+          const voiceTime = fmtSeconds(payload.tts_seconds);
+          const suffix = voiceTime ? ` Voice played in ${voiceTime}.` : "";
+          setComposerStatus(prefix, `Reply received in ${fmtSeconds(payload.elapsed_seconds) || "a moment"}.${suffix}`, "good");
+        }
+        await loadState();
+      } catch (error) {
+        setComposerStatus(prefix, error.message, "error");
+      } finally {
+        input.disabled = false;
+        button.disabled = false;
+        input.focus();
+      }
     }
 
     let autoLaunchTried = false;
@@ -2105,9 +2365,34 @@
         .then(() => { setSaveStatus("Next prompt route cleared."); })
         .catch((error) => { setSaveStatus(error.message); });
     });
+    for (const agent of ["hermes", "openclaw"]) {
+      const prefix = chatNodePrefix(agent);
+      const log = el(`${prefix}Log`);
+      const form = document.querySelector(`[data-chat-agent="${prefix}"]`);
+      const input = el(`${prefix}Input`);
+      log.addEventListener("scroll", () => {
+        chatScrollState[prefix].stick = isNearChatBottom(log);
+      }, { passive: true });
+      form.addEventListener("submit", (event) => sendChatMessage(prefix, event));
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      });
+    }
 
     wireProfileSelect("hermes_voice_profile", "hermes_voice_style", MARA_VOICE_PROFILES);
     wireProfileSelect("openclaw_voice_profile", "openclaw_voice_style", OPENCLAW_VOICE_PROFILES);
+
+    const backendSelect = el("tts_backend");
+    if (backendSelect) {
+      backendSelect.addEventListener("change", () => {
+        syncBackendVisibility();
+        _voiceboxProfilesCache = null;
+        syncVoiceboxSelects({ hermes_voicebox_profile_id: (el("hermes_voicebox_profile_id") || {}).value, openclaw_voicebox_profile_id: (el("openclaw_voicebox_profile_id") || {}).value });
+      });
+    }
 
     loadOptions().catch((error) => {
       setSaveStatus(error.message);

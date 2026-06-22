@@ -7,10 +7,10 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from mara_safety import redact_sensitive, redact_sensitive_text
+from mara.safety import redact_sensitive, redact_sensitive_text
 
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_EVENT_LOG_PATH = Path(
     os.getenv("MARA_EVENT_LOG", str(BASE_DIR / "logs" / "mara_events.jsonl"))
 )

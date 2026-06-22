@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mara_events import append_event, read_recent_events
-from mara_safety import REDACTION, redact_sensitive_text
+from mara.events import append_event, read_recent_events
+from mara.safety import REDACTION, redact_sensitive_text
 
 
 class SafetyTests(unittest.TestCase):
